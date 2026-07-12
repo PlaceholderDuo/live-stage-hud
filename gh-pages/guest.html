@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guest Singer — Live Stage Lyrics</title>
+<style>
+  body {
+    background: #000; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; height: 100vh; margin: 0;
+    padding: 2rem; text-align: center;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+  .spinner {
+    border: 4px solid #333; border-top: 4px solid #4fc3f7;
+    border-radius: 50%; width: 40px; height: 40px;
+    animation: spin 1s linear infinite; margin: 1.5rem auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  p { color: #aaa; font-size: 0.85rem; }
+  .error { color: #ff6b6b; display: none; }
+</style>
+</head>
+<body>
+  <h1>Live Stage Lyrics</h1>
+  <div class="spinner" id="spinner"></div>
+  <p id="status">Connecting to the show...</p>
+  <p class="error" id="error">Could not connect.</p>
+
+  <script>
+    (function() {
+      var sponge = document.getElementById('spinner');
+      var status = document.getElementById('status');
+      var err = document.getElementById('error');
+
+      function go(url) {
+        if (!url) { fail(); return; }
+        status.textContent = 'Connected! Opening lyrics...';
+        window.location.replace(url.replace(/\/$/, '') + '/hud');
+      }
+      function fail() {
+        sponge.style.display = 'none';
+        err.style.display = 'block';
+        status.textContent = 'The show may not be running yet.';
+      }
+      fetch('tunnel-url.txt?t=' + Date.now())
+        .then(function(r) { return r.ok ? r.text() : null; })
+        .then(function(u) { if (u && u.trim()) go(u.trim()); else fail(); })
+        .catch(fail);
+      setTimeout(function() { if (err.style.display === 'none') fail(); }, 5000);
+    })();
+  </script>
+</body>
+</html>
