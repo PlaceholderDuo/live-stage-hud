@@ -1,0 +1,873 @@
+/* === iPhone 7 Controller — Base Styles === */
+/* iPhone 7 screen: 750 x 1334 (portrait) → 1334 x 750 (landscape) */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0a0a0a;
+  --surface: #1a1a1a;
+  --surface-hover: #252525;
+  --text: #ffffff;
+  --text-dim: #666666;
+  --text-muted: #444444;
+  --green: #2ecc71;
+  --red: #e74c3c;
+  --orange: #ff8800;
+  --blue: #3399ff;
+  --cyan: #1abc9c;
+  --purple: #9b59b6;
+  --yellow: #f1c40f;
+  --knob-strip-height: 64px;
+  --status-bar-height: 32px;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* === Beat Flash Edge Strip === */
+.beat-flash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 8px;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.05s ease-out;
+}
+
+.beat-flash.beat-1 {
+  background: #ffffff;
+  box-shadow: 0 0 12px rgba(255,255,255,0.6);
+  opacity: 1;
+}
+
+.beat-flash.beat-234 {
+  background: #2ecc71;
+  box-shadow: 0 0 8px rgba(46,204,113,0.5);
+  opacity: 0.85;
+}
+
+/* === Status Bar === */
+#status-bar {
+  height: var(--status-bar-height);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.connected { background: var(--green); }
+.status-dot.disconnected { background: var(--red); }
+.status-dot.connecting { background: var(--yellow); }
+
+/* === Page Container === */
+#page-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* === Knob Strip === */
+.knob-strip {
+  height: var(--knob-strip-height);
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid #222;
+  flex-shrink: 0;
+}
+
+.knob-label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid #222;
+  padding: 4px 2px;
+}
+
+.knob-label:last-child {
+  border-right: none;
+}
+
+.knob-label-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.knob-label-value {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.knob-label[data-knob="1"] .knob-label-name { color: var(--cyan); }
+.knob-label[data-knob="2"] .knob-label-name { color: var(--orange); }
+.knob-label[data-knob="3"] .knob-label-name { color: var(--blue); }
+.knob-label[data-knob="4"] .knob-label-name { color: var(--purple); }
+
+/* === Home Page === */
+[data-controller-page="home"] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 8px;
+  flex: 1;
+}
+
+.home-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid #222;
+  cursor: pointer;
+  transition: background 0.1s;
+  min-height: 80px;
+  padding: 8px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.home-btn:active {
+  background: var(--surface-hover);
+  transform: scale(0.97);
+}
+
+.home-btn-label {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.home-btn-sub {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* Tap Tempo - spans 2 columns */
+.tap-tempo {
+  grid-column: 1 / 3;
+  min-height: 100px;
+  background: var(--surface);
+  border: 1px solid #222;
+}
+
+.tap-tempo .bpm-display {
+  font-size: 48px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--green);
+}
+
+.tap-tempo .bpm-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.tap-tempo .pulse-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2ecc71;
+  margin-top: 8px;
+  opacity: 0.3;
+  transition: none;
+}
+
+/* MUTE special styling */
+.mute-btn {
+  background: #1a0a0a !important;
+  border-color: #441111 !important;
+}
+
+.mute-btn.mute-vocal {
+  background: #331111 !important;
+  border-color: #882222 !important;
+}
+
+.mute-btn.mute-vocal .home-btn-label { color: var(--red); }
+
+.mute-btn.mute-all {
+  background: #441111 !important;
+  border-color: #cc2222 !important;
+}
+
+.mute-btn.mute-all .home-btn-label { color: var(--red); font-weight: 900; }
+
+.mute-btn.live {
+  background: #0a1a0a !important;
+  border-color: #114411 !important;
+}
+
+.mute-btn.live .home-btn-label { color: var(--green); }
+
+/* Small buttons row */
+.home-small-row {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+
+.small-btn {
+  flex: 1;
+  padding: 8px;
+  background: var(--surface);
+  border-radius: 8px;
+  border: 1px solid #222;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.small-btn:active {
+  background: var(--surface-hover);
+}
+
+.small-btn.double-tap-wiggle {
+  animation: wiggle 0.3s ease-in-out;
+}
+
+.small-btn .double-tap-hint {
+  display: block;
+  font-size: 8px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* === Page: Tuner === */
+[data-controller-page="tuner"] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 20px;
+}
+
+.tuner-note {
+  font-size: 96px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -2px;
+  transition: color 0.15s;
+}
+
+.tuner-cents {
+  font-size: 32px;
+  font-weight: 700;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tuner-cents.sharp { color: var(--red); }
+.tuner-cents.flat { color: var(--blue); }
+.tuner-cents.in-tune { color: var(--green); }
+
+.tuner-string {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-top: 16px;
+}
+
+.tuner-teleprompter-check {
+  margin-top: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.tuner-teleprompter-check input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--green);
+}
+
+.tuner-back {
+  margin-top: 16px;
+  padding: 10px 24px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* === Page: EDM mode === */
+[data-controller-page="edm"] {
+  padding: 12px;
+}
+
+.edm-scene-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.edm-scene-btn {
+  padding: 20px 12px;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 2px solid #222;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.edm-scene-btn:active {
+  transform: scale(0.95);
+}
+
+.edm-scene-btn.active {
+  border-color: var(--green);
+  background: #0a1a0a;
+}
+
+.edm-scene-btn .scene-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.edm-scene-btn .scene-energy {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.edm-return {
+  margin-top: 16px;
+  width: 100%;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* KEYS button state */
+.keys-btn.on {
+  border-color: var(--green) !important;
+}
+
+.keys-btn.on .home-btn-label {
+  color: var(--green) !important;
+}
+
+.keys-btn.off {
+  border-color: var(--text-muted) !important;
+}
+
+.keys-btn.off .home-btn-label {
+  color: var(--text-dim) !important;
+}
+
+/* START button */
+.start-btn {
+  border-color: var(--green) !important;
+}
+
+.start-btn .home-btn-label {
+  color: var(--green) !important;
+}
+
+.start-btn:active {
+  background: #0a2a0a !important;
+}
+
+/* === Page: GTR AMP Presets === */
+[data-controller-page="gtr-amp"] {
+  padding: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.gtr-amp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.gtr-amp-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.gtr-amp-return {
+  padding: 8px 16px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gtr-amp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  flex: 1;
+  align-content: start;
+}
+
+.gtr-amp-preset {
+  padding: 20px 12px;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 2px solid #222;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.gtr-amp-preset:active {
+  transform: scale(0.95);
+}
+
+.gtr-amp-preset.active {
+  border-color: var(--green);
+  background: #0a1a0a;
+}
+
+.gtr-amp-preset .preset-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.gtr-amp-preset .preset-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 4px;
+  opacity: 0.7;
+}
+
+/* === Page: GTR FX === */
+[data-controller-page="gtr-fx"] {
+  padding: 12px;
+}
+
+.fx-param-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.fx-param-card {
+  padding: 16px 12px;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid #222;
+  text-align: center;
+}
+
+.fx-param-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+
+.fx-param-value {
+  font-size: 18px;
+  font-weight: 700;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gtr-fx-return {
+  margin-top: 16px;
+  width: 100%;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* === Page: Setlist / Queue === */
+[data-controller-page="setlist"] {
+  padding: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.setlist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.setlist-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.setlist-return {
+  padding: 8px 16px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.setlist-queue {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  border: 1px solid #222;
+}
+
+.queue-item.active {
+  border-color: var(--green);
+  background: #0a1a0a;
+}
+
+.queue-item .song-title {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.queue-item .song-artist {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-right: 12px;
+}
+
+.queue-item .queue-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.queue-item .queue-controls button {
+  padding: 4px 8px;
+  background: #222;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* === Page: Settings / Troubleshooting === */
+[data-controller-page="settings"] {
+  padding: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.settings-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.settings-return {
+  padding: 8px 16px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-section {
+  margin-bottom: 16px;
+}
+
+.settings-section h3 {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.settings-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: 8px;
+  margin-bottom: 4px;
+  border: 1px solid #222;
+}
+
+.settings-item .label {
+  font-size: 13px;
+}
+
+.settings-item .value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-item .value.error {
+  color: var(--red);
+}
+
+.troubleshoot-entry {
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: 8px;
+  margin-bottom: 4px;
+  border: 1px solid #222;
+}
+
+.troubleshoot-entry .entry-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.troubleshoot-entry .entry-value {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.troubleshoot-entry .entry-value.ok { color: var(--green); }
+.troubleshoot-entry .entry-value.warn { color: var(--yellow); }
+.troubleshoot-entry .entry-value.fail { color: var(--red); }
+
+/* === Navigation === */
+.nav-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  flex-shrink: 0;
+}
+
+.nav-btn {
+  flex: 1;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid #222;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  text-align: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nav-btn:active {
+  background: var(--surface-hover);
+}
+
+/* === Hidden/shown pages === */
+.page {
+  display: none;
+  height: 100%;
+}
+
+.page.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* === Scrollbar === */
+::-webkit-scrollbar {
+  width: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 2px;
+}
+
+/* === Double Tap Indicator === */
+.double-tap-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.double-tap-indicator::before,
+.double-tap-indicator::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--text-muted);
+}
+
+.double-tap-indicator.active::before,
+.double-tap-indicator.active::after {
+  background: var(--text-muted);
+}
+
+.double-tap-first .double-tap-indicator::before {
+  background: var(--yellow);
+  border-color: var(--yellow);
+}
+
+/* === Request badge === */
+.req-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e74c3c;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  padding: 0 5px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* === Requests Page === */
+[data-controller-page="requests"] {
+  padding: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.requests-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.requests-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.requests-return {
+  padding: 8px 16px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#requests-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}

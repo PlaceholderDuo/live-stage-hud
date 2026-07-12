@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Live Controller</title>
+  <link rel="stylesheet" href="controller.css">
+</head>
+<body>
+  <div id="app">
+    <header id="status-bar">
+      <span id="connection-status" class="status-dot disconnected"></span>
+      <span id="status-text">Connecting...</span>
+    </header>
+
+    <main id="page-container">
+      <!-- Pages render here -->
+    </main>
+
+    <footer id="knob-strip" class="knob-strip">
+      <div class="knob-label" data-knob="1">
+        <span class="knob-label-value">--</span>
+        <span class="knob-label-name">VOX</span>
+      </div>
+      <div class="knob-label" data-knob="2">
+        <span class="knob-label-value">--</span>
+        <span class="knob-label-name">GTR</span>
+      </div>
+      <div class="knob-label" data-knob="3">
+        <span class="knob-label-value">--</span>
+        <span class="knob-label-name">BASS</span>
+      </div>
+      <div class="knob-label" data-knob="4">
+        <span class="knob-label-value">--</span>
+        <span class="knob-label-name">REV MST</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="controller.js"></script>
+</body>
+</html>
