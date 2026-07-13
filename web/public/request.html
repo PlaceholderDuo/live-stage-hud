@@ -263,7 +263,11 @@ body {
   'use strict';
 
   var BLOB_URL = 'https://jsonblob.com/api/jsonBlob/019f5394-f14c-7b1b-ba94-c35546262ffa';
-  var LOCAL_API = 'http://rig.local:3300';
+  var LOCAL_API = (function() {
+    // Use the same hostname the user reached this page with, just change port
+    var host = window.location.hostname || 'rig.local';
+    return 'http://' + host + ':3300';
+  })();
   var ADMIN_PASSWORD = 'liveband';
   var POLL_INTERVAL = 5000;
 

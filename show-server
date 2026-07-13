@@ -1,0 +1,223 @@
+#!/bin/bash
+# Live Show Manager — one command for the entire live rig
+#
+#   show-server start     Start server + print connection info
+#   show-server stop      Stop server
+#   show-server restart   Stop → Start
+#   show-server status    Server + network + client summary
+#   show-server setup     One-time: install Dell auto-connect + configure everything
+#
+# Architecture:
+#   MacBook (this machine): REAPER + Node.js server + OSC bridge
+#   Dell (rdfx5):      Auto-discovers MacBook, opens HUD in kiosk
+#   iPhone:            QR code → opens controller in Safari
+set -e
+
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  TARGET="$(readlink "$SCRIPT")"
+  [ "${TARGET#/}" != "$TARGET" ] && SCRIPT="$TARGET" || SCRIPT="$(cd "$(dirname "$SCRIPT")" && echo "$(pwd)/$TARGET")"
+done
+PROJECT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
+
+LSM_DIR="$HOME/Library/Application Support/REAPER/Scripts/Live Show Manager/web"
+CTL="$LSM_DIR/control.sh"
+PORT=3000
+DELL_HOST="192.168.0.127"
+DELL_USER="rdfx5"
+
+# Get this MacBook's IP on whatever network we're currently on
+_my_ip() {
+  local ip
+  ip=$(ifconfig en0 2>/dev/null | grep 'inet ' | awk '{print $2}' | head -1)
+  if [ -z "$ip" ] || [ "$ip" = "127.0.0.1" ]; then
+    for iface in en1 en2 en3 en4; do
+      ip=$(ifconfig "$iface" 2>/dev/null | grep 'inet ' | awk '{print $2}' | head -1)
+      [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ] && break
+    done
+  fi
+  echo "${ip:-127.0.0.1}"
+}
+
+_usage() {
+  echo "Usage: show-server {start|stop|restart|status|setup}"
+  exit 1
+}
+
+_is_running() {
+  lsof -iTCP:${PORT} -sTCP:LISTEN -t >/dev/null 2>&1
+}
+
+_clients() {
+  curl -sf --connect-timeout 2 "http://127.0.0.1:${PORT}/api/clients" 2>/dev/null | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print(d['count']) if 'count' in d else print(0)
+" 2>/dev/null || echo "0"
+}
+
+_start() {
+  if _is_running; then
+    echo "● Server already running on port ${PORT}."
+    _status
+    return 0
+  fi
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  STARTING LIVE SHOW MANAGER"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  if ! _is_running; then
+    bash "$CTL" start 2>&1 | tail -3
+    # Wait for server
+    for i in $(seq 1 30); do
+      _is_running && break
+      sleep 0.2
+    done
+  fi
+
+  local IP=$(_my_ip)
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  SERVER IS LIVE"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  iPhone:  http://${IP}:${PORT}/"
+  echo "  HUD:     http://${IP}:${PORT}/hud.html"
+  echo "  Bonjour: http://RDFX1-macbook-pro.local:${PORT}/"
+  echo ""
+  echo "  → Dell (rdfx5) will auto-discover on boot"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # QR code for iPhone
+  if command -v qrencode >/dev/null 2>&1; then
+    echo ""
+    echo "  Scan this QR with iPhone camera:"
+    qrencode -t ANSIUTF8 "http://${IP}:${PORT}/" 2>/dev/null | head -30
+    echo "  → opens http://${IP}:${PORT}/"
+    echo ""
+    # Also save QR as PNG for the setup page
+    qrencode -o "$PROJECT_DIR/web/public/qr-connect.png" "http://${IP}:${PORT}/" 2>/dev/null || true
+  fi
+}
+
+_stop() {
+  if ! _is_running; then
+    echo "Server is not running."
+    return 0
+  fi
+  echo "Stopping server..."
+  bash "$CTL" stop 2>/dev/null
+  echo "✓ Server stopped."
+}
+
+_restart() { _stop; sleep 1; _start; }
+
+_status() {
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  if _is_running; then
+    local IP=$(_my_ip)
+    local CLIENTS=$(_clients)
+    echo "  Server:  ● RUNNING  (port ${PORT})"
+    echo "  Mac IP:  ${IP}:${PORT}"
+    echo ""
+    echo "  iPhone:  http://${IP}:${PORT}/"
+    echo "  HUD:     http://${IP}:${PORT}/hud.html"
+    echo "  Bonjour: http://RDFX1-macbook-pro.local:${PORT}/"
+    echo ""
+    echo "  Clients: ${CLIENTS} connected"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  else
+    echo "  Server:  ○ STOPPED"
+    echo "  Run:     show-server start"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+}
+
+_setup() {
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  ONE-TIME SETUP"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  # 1. Symlink show-server into PATH if not there
+  if [ ! -e "/opt/homebrew/bin/show-server" ]; then
+    echo "→ Linking show-server to /opt/homebrew/bin/show-server..."
+    sudo ln -sf "$PROJECT_DIR/show-server" /opt/homebrew/bin/show-server 2>/dev/null || \
+      echo "  (sudo may be needed — run: sudo ln -sf \"$PROJECT_DIR/show-server\" /opt/homebrew/bin/show-server)"
+  else
+    echo "✓ show-server already in PATH"
+  fi
+
+  # 2. Deploy Dell auto-connect scripts to rdfx5
+  echo ""
+  echo "→ Setting up Dell (rdfx5) auto-connect..."
+
+  local DELL_SCRIPT="$PROJECT_DIR/scripts/dell-hud-connect.sh"
+  if [ ! -f "$DELL_SCRIPT" ]; then
+    echo "  ERROR: dell-hud-connect.sh not found at $DELL_SCRIPT"
+    return 1
+  fi
+
+  if nc -z -w 2 "$DELL_HOST" 22 2>/dev/null; then
+    scp "$DELL_SCRIPT" "${DELL_USER}@${DELL_HOST}:/home/${DELL_USER}/dell-hud-connect.sh" 2>&1 || true
+
+    # Install systemd user service
+    ssh "${DELL_USER}@${DELL_HOST}" 'bash -s' << 'DELLSETUP' 2>&1 || true
+mkdir -p ~/.config/systemd/user/
+cat > ~/.config/systemd/user/dell-hud-connect.service << 'SVC'
+[Unit]
+Description=Dell HUD Auto-Connect (Live Show Manager)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /home/rdfx5/dell-hud-connect.sh
+Restart=always
+RestartSec=10
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=default.target
+SVC
+chmod +x ~/dell-hud-connect.sh
+systemctl --user daemon-reload
+systemctl --user enable dell-hud-connect.service
+echo "✓ Dell service installed and enabled"
+DELLSETUP
+    echo "✓ Dell (rdfx5) configured"
+  else
+    echo "  ⚠ rdfx5 not reachable at ${DELL_HOST} — deploy manually later"
+    echo "    scp $DELL_SCRIPT rdfx5@${DELL_HOST}:/home/rdfx5/"
+  fi
+
+  # 3. Generate iPhone landing page QR
+  local IP=$(_my_ip)
+  if command -v qrencode >/dev/null 2>&1; then
+    qrencode -o "$PROJECT_DIR/web/public/qr-connect.png" "http://${IP}:${PORT}/" 2>/dev/null || true
+    echo "✓ QR code generated"
+  fi
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  SETUP COMPLETE"
+  echo ""
+  echo "  To start the show:     show-server start"
+  echo "  To check status:       show-server status"
+  echo "  To stop:               show-server stop"
+  echo ""
+  echo "  Dell rdfx5 will auto-discover on boot."
+  echo "  iPhone: scan the QR code printed on start."
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+case "${1:-}" in
+  start)   _start ;;
+  stop)    _stop ;;
+  restart) _restart ;;
+  status)  _status ;;
+  setup)   _setup ;;
+  *)       _usage ;;
+esac

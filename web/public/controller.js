@@ -15,6 +15,7 @@
     activeScene: null,
     activeSong: null,
     activeAmpPreset: 'OSD',
+    lyricLines: [],
     settings: loadSettings(),
     lastStateTime: 0,
     lastPosition: 0,
@@ -132,9 +133,13 @@
   }
 
   function predictedPosition() {
-    if (!state.lastStateTime) return state.position;
-    var dt = (performance.now() - state.lastStateTime) / 1000;
-    return state.lastPosition + dt;
+    if (state.lastStateTime > 0 && state.lastPosition > 0) {
+      var dt = (performance.now() - state.lastStateTime) / 1000;
+      return state.lastPosition + dt;
+    }
+    // No live position — run steady metronome at song BPM
+    if (!state._metronomeRef) state._metronomeRef = performance.now();
+    return (performance.now() - state._metronomeRef) / 1000;
   }
 
   function tickBeats() {
@@ -183,66 +188,42 @@
     beatLoopId = requestAnimationFrame(loop);
   }
 
-  // ─── WebSocket ────────────────────────────────────────
-  let ws = null;
-  let reconnectTimer = null;
+  // ─── Socket.IO (existing Live Show Manager server) ───
+  // The server uses Socket.IO with auto-reconnect built in.
+  // Events: 'state' (merged bridge_state.json), 'fxData', 'trackLevels', etc.
+  // Commands: socket.emit('action', { type, value })
 
-  function connectWebSocket() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = location.host || 'rig.local:5800';
-    const url = protocol + '//' + host;
+  let socket = null;
 
+  function connectSocketIO() {
     setConnectionStatus('connecting');
 
-    ws = new WebSocket(url);
+    socket = io({
+      transports: ['polling', 'websocket'],
+      timeout: 10000,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
+    });
 
-    ws.onopen = function () {
+    socket.on('connect', function () {
       setConnectionStatus('connected');
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-    };
+    });
 
-    ws.onclose = function () {
+    socket.on('disconnect', function () {
       setConnectionStatus('disconnected');
-      scheduleReconnect();
-    };
+    });
 
-    ws.onerror = function () {
+    socket.on('connect_error', function () {
       setConnectionStatus('disconnected');
-    };
+    });
 
-    ws.onmessage = function (event) {
-      try {
-        const msg = JSON.parse(event.data);
-        handleServerMessage(msg);
-      } catch (e) {
-        console.warn('Invalid message from server:', event.data);
-      }
-    };
-  }
-
-  function scheduleReconnect() {
-    if (reconnectTimer) return;
-    reconnectTimer = setTimeout(function () {
-      reconnectTimer = null;
-      connectWebSocket();
-    }, 3000);
-  }
-
-  function sendCommand(action, payload) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'command', action: action, ...payload }));
-  }
-
-  function handleServerMessage(msg) {
-    if (msg.type === 'state') {
+    socket.on('state', function (msg) {
       if (msg.bpm) state.tempo = msg.bpm;
-      if (msg.position !== undefined) {
+      if (msg.position !== undefined && msg.position !== state.position) {
         state.lastPosition = msg.position;
         state.lastStateTime = performance.now();
         state.position = msg.position;
+        state._metronomeRef = null; // reset metronome when live data arrives
       }
       if (msg.currentSong) state.activeSong = msg.currentSong;
       if (msg.activeScene !== undefined) state.activeScene = msg.activeScene;
@@ -260,11 +241,19 @@
         var gs = document.getElementById('gtr-amp-sub');
         if (gs) gs.textContent = msg.activeAmpPreset;
       }
+      if (msg.lyricLines) {
+        state.lyricLines = msg.lyricLines;
+      }
       // Dispatch state to active page
       if (pages[state.currentPage] && pages[state.currentPage].onState) {
         pages[state.currentPage].onState(msg);
       }
-    }
+    });
+  }
+
+  function sendCommand(action, value) {
+    if (!socket || !socket.connected) return;
+    socket.emit('action', { type: action, value: value || {} });
   }
 
   // ─── Double Tap Utility ──────────────────────────────
@@ -548,19 +537,19 @@
       btn.className = 'home-btn mute-btn mute-vocal';
       label.textContent = 'MUTED: VOCAL';
       sub.textContent = 'Tap to also mute PA';
-      sendCommand('mute', { level: 'vocal' });
+      sendCommand('mute_with_level', { level: 'vocal' });
     } else if (state.muteState === 'vocal') {
       state.muteState = 'all';
       btn.className = 'home-btn mute-btn mute-all';
       label.textContent = 'MUTED: ALL';
       sub.textContent = 'Tap to restore';
-      sendCommand('mute', { level: 'all' });
+      sendCommand('mute_with_level', { level: 'all' });
     } else {
       state.muteState = 'live';
       btn.className = 'home-btn mute-btn live';
       label.textContent = 'LIVE';
       sub.textContent = 'Tap to mute vocal';
-      sendCommand('mute', { level: 'none' });
+      sendCommand('mute_with_level', { level: 'none' });
     }
   }
 
@@ -921,7 +910,7 @@
   // ════════════════════════════════════════════════════════
 
   var REQUESTS_BLOB_URL = 'https://jsonblob.com/api/jsonBlob/019f5394-f14c-7b1b-ba94-c35546262ffa';
-  var REQUESTS_LOCAL_API = 'http://localhost:3300';
+  var REQUESTS_LOCAL_API = window.location.protocol + '//' + window.location.hostname + ':3300';
   var requestsPollTimer = null;
   var guestRequests = [];
 
@@ -1109,19 +1098,8 @@
   function init() {
     createBeatFlash();
     startBeatLoop();
-    connectWebSocket();
+    connectSocketIO();
     navigateTo('home');
-
-    // Poll for guest song requests every 10s
-    updateRequestBadge();
-    setInterval(updateRequestBadge, 10000);
-
-    // Handle visibility change — reconnect if needed
-    document.addEventListener('visibilitychange', function () {
-      if (!document.hidden && !state.connected) {
-        connectWebSocket();
-      }
-    });
   }
 
   if (document.readyState === 'loading') {

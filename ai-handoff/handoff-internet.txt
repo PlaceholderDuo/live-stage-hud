@@ -1,0 +1,251 @@
+================================================================
+  AI HANDOFF — iPhone Controller Testing (OFFLINE MODE)
+  No internet needed. Everything is local.
+================================================================
+
+WHAT THIS IS
+------------
+We're testing a web-based iPhone controller for a live music show.
+The controller runs in Safari on an iPhone 7 docked behind the
+Alesis V25 keyboard. It controls REAPER (DAW) via a Node.js server.
+
+You are a local AI running WITHOUT internet access. Here's what
+I need you to do:
+
+  1. Verify the server is running on this MacBook
+  2. Open the controller URL in Safari on this MacBook
+  3. Help me test it on the iPhone 7
+  4. Troubleshoot any connectivity issues
+
+================================================================
+  FILES & PATHS
+================================================================
+
+Project source (iPhone controller HTML/CSS/JS):
+  ~/Documents/projects/live-stage-hud/web/public/
+    index.html    — Main controller page
+    controller.js — JavaScript (module system, beat flash, all pages)
+    controller.css — Styles (dark theme, horizontal layout)
+
+Live Show Manager server (Node.js, OSC, WebSocket):
+  ~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/
+    server.js     — Main server (1073+ lines, Socket.IO, OSC, MIDI)
+    public/       — Static files served from here
+    control.sh    — Start/stop/status/restart commands
+    logs/         — Server logs
+
+Bridge state file (Lua runner writes this, server polls it):
+  ~/Library/Application Support/REAPER/Scripts/Live Show Manager/data/bridge_state.json
+
+Bumper music:
+  ~/bumper-music/  (20 tracks, M4A format, ~110MB)
+
+================================================================
+  SERVER COMMANDS (run in Terminal)
+================================================================
+
+Check status:
+  cd "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web" && ./control.sh status
+
+Start server:
+  cd "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web" && ./control.sh start
+
+Stop server:
+  cd "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web" && ./control.sh stop
+
+Restart server:
+  cd "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web" && ./control.sh restart
+
+View server log:
+  cd "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web" && tail -20 logs/server.log
+
+Verify port is listening:
+  lsof -iTCP:3000 -sTCP:LISTEN
+
+Check if server returns 200:
+  curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/
+
+================================================================
+  URLS (the most important section)
+================================================================
+
+MacBook Safari (testing on this machine):
+  http://localhost:3000/
+  http://127.0.0.1:3000/
+
+iPhone Safari (on the SAME WiFi network):
+  Get the MacBook IP first:  ifconfig en0 | grep 'inet ' | awk '{print $2}'
+  Then:  http://<MAC-IP>:3000/
+  Example:  http://192.168.0.191:3000/
+
+Bonjour (if mDNS works on the WiFi):
+  http://RDFX1-macbook-pro.local:3000/
+
+Stage HUD (secondary display):
+  http://localhost:3000/hud.html
+
+Legacy controller (old version, backup):
+  http://localhost:3000/index.legacy.html
+
+================================================================
+  TESTING PROCEDURE
+================================================================
+
+STEP 1: Check server is running
+  Run: lsof -iTCP:3000 -sTCP:LISTEN
+  Expected output: a line showing "node" listening on *:3000
+  If nothing: run ./control.sh start
+
+STEP 2: Test on MacBook first
+  Run: open -a Safari http://127.0.0.1:3000/
+  Expected: Dark page with Tap Tempo display, beat flash bar at top,
+            grid of buttons (EDM, Setlist, MUTE, TUNER, GTR FX, etc.),
+            knob labels at bottom (VOX, GTR, BASS, REV MST)
+
+STEP 3: Check WebSocket connection
+  Open Safari Web Inspector (Develop > Show Web Inspector > Console)
+  Expected: Green status dot, "Connected" text
+  If connecting forever: server not running or port wrong
+
+STEP 4: Check beat flash
+  The thin bar at the very top of the screen should pulse green/white
+  at 120 BPM (or whatever BPM is in bridge_state.json)
+  The small dot on the Tap Tempo widget should sync with it
+
+STEP 5: Navigate pages
+  - Tap "EDM" → should show 8 scene buttons (Intro → Outro)
+  - Tap "← Back" → should return to home
+  - Tap "Setlist" → should show song list (if server has data)
+  - Knob labels at bottom should update per page
+
+STEP 6: Test on iPhone
+  a. On this MacBook: run "ifconfig en0 | grep 'inet ' | awk '{print $2}'"
+     Note the IP address (e.g. 192.168.0.191)
+  b. On iPhone: connect to SAME WiFi as the MacBook
+  c. On iPhone: open Safari, type "http://<IP>:3000/"
+  d. Expected: Same dark page loads on the iPhone
+  e. Tap "Add to Home Screen" in Safari share menu for fullscreen
+
+================================================================
+  TROUBLESHOOTING
+================================================================
+
+iPhone can't connect (Safari says "can't connect"):
+  1. Check both devices on same WiFi network
+  2. Check firewall is OFF (run: sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate)
+     It should say: "Firewall is disabled."
+  3. On MacBook, verify the server is running:
+     lsof -iTCP:3000 -sTCP:LISTEN
+  4. On MacBook, verify the network interface has the IP you expect:
+     ifconfig en0 | grep 'inet '
+     If WiFi is down, check other interfaces:
+     for i in en0 en1 en2 en3 en4; do echo "$i: $(ifconfig $i 2>/dev/null | grep 'inet ' | awk '{print $2}')"; done
+  5. Try from the MacBook itself to verify the server is reachable:
+     curl http://127.0.0.1:3000/ | head -5
+     Expected: "<!DOCTYPE html>..." 
+  6. Check the server log for errors:
+     tail -30 "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/logs/server.log"
+
+Beat flash not working:
+  1. Check WebSocket connection (green dot on controller)
+  2. Check bridge_state.json has bpm data:
+     cat "~/Library/Application Support/REAPER/Scripts/Live Show Manager/data/bridge_state.json"
+     Look for "bpm": 120 — if missing, the beat flash won't run
+  3. The beat flash runs at the BPM from bridge_state.json, even if
+     REAPER isn't playing. It runs as a steady metronome.
+
+Buttons not working (e.g., MUTE, KEYS, scene select):
+  1. These send commands via WebSocket → server → OSC → REAPER
+  2. If REAPER isn't open or doesn't have the OSC control surface configured,
+     the commands will be LOGGED but won't actually do anything.
+     This is expected for tonight — the controller's primary use is
+     showing song data (BPM, key) and visual metronome.
+  3. Check server log for received commands:
+     tail -f "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/logs/server.log"
+     You'll see: [Action] scene_select, [Action] keys_toggle, etc.
+
+No song data showing:
+  1. Check bridge_state.json exists and has data:
+     cat "~/Library/Application Support/REAPER/Scripts/Live Show Manager/data/bridge_state.json"
+  2. If empty or missing, the Lua runner isn't running.
+     The server broadcasts whatever is in bridge_state.json every 500ms.
+  3. The controller shows BPM from state.bpm, song name from state.currentSong, etc.
+
+Server crashed / won't start:
+  1. Check logs:
+     tail -50 "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/logs/server.log"
+     tail -50 "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/logs/server-error.log"
+  2. Common issues:
+     - Port 3000 in use: kill the old process (pkill -f "node server.js")
+     - Port 9000 in use (OSC): kill process on that port
+     - Missing npm deps: cd to web/ dir, run "npm install"
+  3. launchd should auto-restart the server if it crashes
+     Check: launchctl list | grep liveshowmanager
+
+================================================================
+  NETWORK
+================================================================
+
+Current MacBook IP: 192.168.0.191 (on home network)
+Show network IP: will be different — CHECK AFTER CONNECTING TO SHOW WIFI
+
+To find the IP on any network:
+  ifconfig en0 2>/dev/null | grep 'inet ' | awk '{print $2}'
+  (or check other interfaces: en1, en2, en3, en4)
+
+If the MacBook connects to the show WiFi but has NO IP:
+  Try: sudo ifconfig en0 up
+  Or: check the network cable / WiFi adapter is connected
+
+Firewall must be OFF:
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+  If ON: sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
+
+================================================================
+  KEY ARCHITECTURE (for debugging)
+================================================================
+
+Data flow:
+  REAPER (position, BPM, song data)
+    → Lua Runner (bridge writes bridge_state.json every 200ms)
+      → Node.js Server (polls bridge_state.json every 500ms)
+        → Socket.IO WebSocket → iPhone Controller + Stage HUD
+
+Control flow:
+  iPhone Controller (user taps button)
+    → Socket.IO "action" event → Node.js Server
+      → OSC message → REAPER performs the action
+
+Ports:
+  3000 — HTTP + WebSocket (iPhone connects here)
+  8000 — OSC out (server → REAPER)
+  9000 — OSC in  (REAPER → server)
+
+The launchd service that manages auto-start:
+  Label: com.liveshowmanager.bridge
+  Plist: ~/Library/LaunchAgents/com.liveshowmanager.bridge.plist
+  Commands:
+    launchctl list | grep liveshowmanager   (check status)
+    launchctl start com.liveshowmanager.bridge
+    launchctl stop com.liveshowmanager.bridge
+
+================================================================
+  FINAL CHECKLIST (before show)
+================================================================
+
+[ ] MacBook connected to show WiFi
+[ ] IP obtained (run: ifconfig en0 | grep 'inet ')
+[ ] Server running (run: lsof -iTCP:3000 -sTCP:LISTEN)
+[ ] iPhone connected to same WiFi as MacBook
+[ ] iPhone Safari loads http://<MAC-IP>:3000/
+[ ] Green status dot shows "Connected"
+[ ] Beat flash bar pulses at screen top
+[ ] BPM number shown on Tap Tempo widget
+[ ] Song name shown (e.g. "OFFICIAL CHICKEN FRIED TABS")
+[ ] Buttons navigate between pages
+[ ] "Add to Home Screen" done on iPhone for fullscreen
+[ ] Keep iPhone charged (dock or power bank)
+[ ] Screen brightness on iPhone set to MAXIMUM
+[ ] Video recording turned OFF on iPhone (saves battery/CPU)
+
+================================================================

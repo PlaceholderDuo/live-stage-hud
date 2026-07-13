@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
-const { WebSocketServer } = require('ws');
+const { Server } = require('socket.io');
 
 const PORT = 5800;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -47,12 +47,13 @@ function resolvePath(urlPath) {
   return path.join(PUBLIC_DIR, urlPath);
 }
 
-// ─── Bumper Music Engine ─────────────────────────────────────────
+// ─── Bumper Music Engine (zero resources when idle) ─────────────
 
 let bumperProcess = null;
 let bumperPlaying = false;
 let bumperPlaylist = [];
 let bumperIndex = 0;
+let bumperScanned = false;
 
 function scanBumperMusic() {
   try {
@@ -60,20 +61,22 @@ function scanBumperMusic() {
       .filter(f => /\.(m4a|mp3|wav)$/i.test(f))
       .sort(() => Math.random() - 0.5);
     bumperPlaylist = files.map(f => path.join(BUMPER_DIR, f));
+    bumperScanned = true;
     if (bumperPlaylist.length === 0) {
       console.warn('No bumper music files found in', BUMPER_DIR);
     }
   } catch (e) {
     console.warn('Cannot read bumper music dir:', e.message);
     bumperPlaylist = [];
+    bumperScanned = true;
   }
 }
 
 function bumperPlay(trackPath) {
   bumperStop();
+  if (!bumperScanned) scanBumperMusic();
   if (!trackPath || !fs.existsSync(trackPath)) {
-    if (bumperPlaylist.length === 0) scanBumperMusic();
-    if (bumperPlaylist.length === 0) return;
+    if (bumperPlaylist.length === 0) { if (!bumperScanned) scanBumperMusic(); if (bumperPlaylist.length === 0) return; }
     bumperIndex = bumperIndex % bumperPlaylist.length;
     trackPath = bumperPlaylist[bumperIndex];
   }
@@ -83,7 +86,6 @@ function bumperPlay(trackPath) {
   bumperProcess.on('exit', () => {
     bumperPlaying = false;
     bumperProcess = null;
-    // Auto-advance to next track
     bumperIndex = (bumperIndex + 1) % bumperPlaylist.length;
     broadcastBumperStatus();
   });
@@ -109,7 +111,8 @@ function bumperToggle() {
 }
 
 function bumperSkip() {
-  if (bumperPlaylist.length === 0) scanBumperMusic();
+  if (!bumperScanned) scanBumperMusic();
+  if (bumperPlaylist.length === 0) return;
   bumperIndex = (bumperIndex + 1) % bumperPlaylist.length;
   if (bumperPlaying) {
     bumperPlay(bumperPlaylist[bumperIndex]);
@@ -123,16 +126,13 @@ function getBumperStatus() {
     currentTrack: bumperPlaying && bumperPlaylist[bumperIndex]
       ? path.basename(bumperPlaylist[bumperIndex]).replace(/\.[^.]+$/, '')
       : null,
-    queueSize: bumperPlaylist.length,
+    queueSize: bumperScanned ? bumperPlaylist.length : 0,
   };
 }
 
 function broadcastBumperStatus() {
   broadcast(getBumperStatus());
 }
-
-// Initial scan
-scanBumperMusic();
 
 // ─── HTTP Server ─────────────────────────────────────────────────
 
@@ -230,6 +230,7 @@ const server = http.createServer((req, res) => {
       bumperSkip();
       res.end(JSON.stringify(getBumperStatus()));
     } else if (action === 'status') {
+      if (!bumperScanned) scanBumperMusic();
       res.end(JSON.stringify(getBumperStatus()));
     } else {
       res.end(JSON.stringify({ error: 'unknown action' }));
@@ -252,6 +253,38 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname.startsWith('/api/')) {
+    // Proxy chordpro requests to main server (:3300)
+    if (pathname.startsWith('/api/chordpro/')) {
+      const songId = decodeURIComponent(pathname.slice('/api/chordpro/'.length));
+      http.get(`http://localhost:3300/api/songs/${encodeURIComponent(songId)}`, (apiRes) => {
+        let d = '';
+        apiRes.on('data', c => d += c);
+        apiRes.on('end', () => {
+          try {
+            const song = JSON.parse(d);
+            const meta = song.meta || {};
+            // Convert song data to ChordPro format
+            let chordpro = `{title: ${meta.title || songId}}\n`;
+            chordpro += `{artist: ${meta.artist || ''}}\n`;
+            chordpro += `{key: ${meta.key || ''}}\n`;
+            chordpro += `{bpm: ${meta.bpm || 120}}\n\n`;
+            const lyrics = meta.lyrics || [];
+            for (const l of lyrics) {
+              if (l.text) chordpro += l.text + '\n';
+            }
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end(chordpro);
+          } catch (e) {
+            res.writeHead(500);
+            res.end('Error');
+          }
+        });
+      }).on('error', () => {
+        res.writeHead(502);
+        res.end('Main server unreachable');
+      });
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', message: 'API not yet wired' }));
     return;
@@ -261,58 +294,90 @@ const server = http.createServer((req, res) => {
   sendFile(res, filePath);
 });
 
-// WebSocket
-const wss = new WebSocketServer({ server });
-const clients = new Set();
+// Socket.IO
+const io = new Server(server);
 
-wss.on('connection', (ws) => {
-  clients.add(ws);
-  console.log('Client connected (' + clients.size + ' total)');
+io.on('connection', (socket) => {
+  console.log('Client connected (' + io.engine.clientsCount + ' total)');
 
-  ws.on('message', (raw) => {
+  socket.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
     if (msg.type === 'command') {
       if (msg.action === 'bumper_toggle') {
-        bumperToggle(); // broadcasts status internally
+        bumperToggle();
         return;
       }
-      // TODO: relay to REAPER via OSC/MIDI
-      broadcast({ type: 'command_ack', action: msg.action, status: 'received' });
+      io.emit('command_ack', { type: 'command_ack', action: msg.action, status: 'received' });
     }
   });
 
-  ws.on('close', () => {
-    clients.delete(ws);
-    console.log('Client disconnected (' + clients.size + ' total)');
+  socket.on('disconnect', () => {
+    console.log('Client disconnected (' + io.engine.clientsCount + ' total)');
   });
 });
 
-function broadcast(data) {
-  const str = JSON.stringify(data);
-  clients.forEach((c) => {
-    if (c.readyState === 1) c.send(str);
+// Live state loop — fetches real song data from main server (:3300)
+function fetchCurrentSong() {
+  return new Promise((resolve) => {
+    http.get('http://localhost:3300/api/queue/current', (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const d = JSON.parse(data);
+          resolve(d.current_song || null);
+        } catch { resolve(null); }
+      });
+    }).on('error', () => resolve(null));
   });
 }
 
-// Mock state loop (simulates REAPER position data for development)
-let simTime = 0;
-setInterval(() => {
-  if (clients.size === 0) return;
-  simTime += 0.5;
-  const bpm = 128;
-  broadcast({
-    type: 'state',
-    bpm: bpm,
-    position: simTime,
-    duration: 240,
-    currentSong: 'Test Song',
-    currentArtist: 'Dev Mode',
-    activeScene: 1,
-    keysOn: true,
-    activeAmpPreset: 'OSD',
-  });
-}, 500);
+async function emitState() {
+  if (io.engine.clientsCount === 0) return;
+  
+  const song = await fetchCurrentSong();
+  
+  if (song && song.slug) {
+    // Fetch song metadata for key/bpm/lyrics
+    const meta = await new Promise((resolve) => {
+      http.get(`http://localhost:3300/api/songs/${encodeURIComponent(song.slug)}`, (res) => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => {
+          try { resolve(JSON.parse(d).meta || {}); } catch { resolve({}); }
+        });
+      }).on('error', () => resolve({}));
+    });
+
+    io.emit('state', {
+      currentSong: song.title || song.slug,
+      currentArtist: song.artist || '',
+      currentKey: song.key || meta.key || '',
+      bpm: song.bpm || meta.bpm || 120,
+      songId: song.slug,
+      lyrics: meta.lyrics || [],
+      position: 0,
+      duration: meta.duration_bars ? meta.duration_bars * 2 : 240,
+      activeScene: 1,
+      keysOn: true,
+    });
+  } else {
+    io.emit('state', {
+      currentSong: '—',
+      currentArtist: '',
+      currentKey: '—',
+      bpm: 120,
+      songId: null,
+      position: 0,
+      duration: 0,
+      activeScene: 0,
+      keysOn: false,
+    });
+  }
+}
+
+setInterval(emitState, 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Live Show Manager running at http://${HOSTNAME}:${PORT}`);
@@ -320,8 +385,17 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  Request Page:      http://${HOSTNAME}:${PORT}/request`);
   console.log(`  Stage HUD:         http://${HOSTNAME}:${PORT}/hud`);
   console.log(`  WebSocket:         ws://${HOSTNAME}:${PORT}/`);
-  console.log(`  Bumper Music:      http://${HOSTNAME}:${PORT}/bumper`);
-  if (bumperPlaylist.length > 0) {
-    console.log(`  Bumper tracks:     ${bumperPlaylist.length} (${BUMPER_DIR})`);
-  }
+  console.log(`  Bumper Music:      http://${HOSTNAME}:${PORT}/bumper  (on-demand, 0 CPU idle)`);
 });
+
+// Graceful shutdown
+function shutdown() {
+  console.log('Shutting down...');
+  bumperStop();
+  server.close(() => {
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(0), 2000);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
