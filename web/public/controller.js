@@ -1,4 +1,4 @@
-/* === iPhone 7 Controller — Main Application === */
+  /* === iPhone 7 Controller — Main Application === */
 /* Modular page architecture — each page is a self-contained module */
 
 (function () {
@@ -20,6 +20,14 @@
     lastStateTime: 0,
     lastPosition: 0,
     beatFlashAnim: null,
+    // OSC feedback from REAPER
+    trackVolumes: {},
+    trackMutes: {},
+    trackNames: {},
+    trackLevels: [],
+    fxParams: {},
+    mixerValues: {},
+    tuner: null,
     knobLabels: {
       1: { name: 'VOX', value: '--', color: '#1abc9c' },
       2: { name: 'GTR', value: '--', color: '#ff8800' },
@@ -217,6 +225,13 @@
       setConnectionStatus('disconnected');
     });
 
+    socket.on('tuner', function (data) {
+      state.tuner = data;
+      if (state.currentPage === 'tuner') {
+        updateTunerDisplay(data);
+      }
+    });
+
     socket.on('state', function (msg) {
       if (msg.bpm) state.tempo = msg.bpm;
       if (msg.position !== undefined && msg.position !== state.position) {
@@ -244,6 +259,13 @@
       if (msg.lyricLines) {
         state.lyricLines = msg.lyricLines;
       }
+      // New fields from OSC feedback
+      if (msg.trackVolumes) state.trackVolumes = msg.trackVolumes;
+      if (msg.trackMutes) state.trackMutes = msg.trackMutes;
+      if (msg.trackNames) state.trackNames = msg.trackNames;
+      if (msg.trackLevels) state.trackLevels = msg.trackLevels;
+      if (msg.fxParams) state.fxParams = msg.fxParams;
+      if (msg.mixerValues) state.mixerValues = msg.mixerValues;
       // Dispatch state to active page
       if (pages[state.currentPage] && pages[state.currentPage].onState) {
         pages[state.currentPage].onState(msg);
@@ -314,16 +336,16 @@
             <span class="home-btn-sub">Songs & queue</span>
           </div>
 
-          <!-- MIXER (placeholder) -->
-          <div class="home-btn" id="btn-mixer" style="border-color: #333; opacity: 0.4;">
-            <span class="home-btn-label" style="color: #666;">Mixer</span>
-            <span class="home-btn-sub">Coming soon</span>
+          <!-- MIXER -->
+          <div class="home-btn" id="btn-mixer" style="border-color: #7f8c8d;">
+            <span class="home-btn-label" style="color: #95a5a6;">Mixer</span>
+            <span class="home-btn-sub">Channel levels</span>
           </div>
 
-          <!-- Battery Monitor (placeholder) -->
-          <div class="home-btn" id="btn-battery" style="border-color: #333; opacity: 0.4;">
-            <span class="home-btn-label" style="color: #666;">Battery</span>
-            <span class="home-btn-sub">Coming soon</span>
+          <!-- Battery Monitor -->
+          <div class="home-btn" id="btn-battery" style="border-color: #f1c40f;">
+            <span class="home-btn-label" style="color: #f1c40f;">Battery</span>
+            <span class="home-btn-sub" id="battery-sub">No data</span>
           </div>
 
           <!-- MUTE -->
@@ -367,18 +389,6 @@
             <span class="home-btn-label">▶ START</span>
             <span class="home-btn-sub">Next song</span>
           </div>
-
-          <!-- MIXER (placeholder) -->
-          <div class="home-btn" id="btn-mixer" style="border-color: #333; opacity: 0.4;">
-            <span class="home-btn-label" style="color: #666;">Mixer</span>
-            <span class="home-btn-sub">Coming soon</span>
-          </div>
-
-          <!-- Battery Monitor (placeholder) -->
-          <div class="home-btn" id="btn-battery" style="border-color: #333; opacity: 0.4;">
-            <span class="home-btn-label" style="color: #666;">Battery</span>
-            <span class="home-btn-sub">Coming soon</span>
-          </div>
         </div>
 
         <!-- Small buttons row -->
@@ -421,6 +431,16 @@
         navigateTo('setlist');
       });
 
+      // MIXER
+      document.getElementById('btn-mixer').addEventListener('click', function () {
+        navigateTo('mixer');
+      });
+
+      // Battery
+      document.getElementById('btn-battery').addEventListener('click', function () {
+        navigateTo('battery');
+      });
+
       // MUTE
       document.getElementById('btn-mute').addEventListener('click', function () {
         cycleMute();
@@ -447,7 +467,7 @@
       keysBtn.addEventListener('pointerdown', function () {
         keysTimer = setTimeout(function () {
           keysTimer = null;
-          // Long press — open VST settings page (bonus, not needed tonight)
+          navigateTo('vst-settings');
         }, 600);
       });
       keysBtn.addEventListener('pointerup', function () {
@@ -572,11 +592,18 @@
     render: function (container) {
       var html = '<div class="edm-scene-grid">';
       edmScenes.forEach(function (s, i) {
-        html += '<div class="edm-scene-btn" data-scene="' + (i + 1) + '" style="border-color: ' + s.color + ';">';
+        var active = (i + 1) === state.activeScene ? ' active' : '';
+        html += '<div class="edm-scene-btn' + active + '" data-scene="' + (i + 1) + '" style="border-color: ' + s.color + ';">';
         html += '<div class="scene-name" style="color: ' + s.color + ';">' + s.name + '</div>';
         html += '<div class="scene-energy">' + s.energy + '</div>';
         html += '</div>';
       });
+      html += '</div>';
+      html += '<div class="edm-knob-values" style="display:flex;gap:8px;padding:12px 0;">';
+      html += '  <div class="edm-knob-card" id="edm-kv-filter"><div class="kv-label">FILTER</div><div class="kv-value">--</div></div>';
+      html += '  <div class="edm-knob-card" id="edm-kv-res"><div class="kv-label">RES</div><div class="kv-value">--</div></div>';
+      html += '  <div class="edm-knob-card" id="edm-kv-rev"><div class="kv-label">REV</div><div class="kv-value">--</div></div>';
+      html += '  <div class="edm-knob-card" id="edm-kv-delay"><div class="kv-label">DELAY</div><div class="kv-value">--</div></div>';
       html += '</div>';
       html += '<button class="edm-return" id="edm-return">← Back</button>';
       container.innerHTML = html;
@@ -605,7 +632,23 @@
         4: { name: 'DELAY', value: '--', color: '#e67e22' },
       });
     },
+
+    onState: function (msg) {
+      if (msg.mixerValues) {
+        updateEDMKnobValues(msg.mixerValues);
+      }
+    },
   });
+
+  function updateEDMKnobValues(mv) {
+    var map = { filter: 'edm-kv-filter', res: 'edm-kv-res', rev: 'edm-kv-rev', delay: 'edm-kv-delay' };
+    Object.keys(map).forEach(function (k) {
+      var el = document.getElementById(map[k]);
+      if (el && mv[k] !== undefined) {
+        el.querySelector('.kv-value').textContent = Math.round(mv[k] * 100) + '%';
+      }
+    });
+  }
 
   // ════════════════════════════════════════════════════════
   // ─── PAGE: TUNER ─────────────────────────────────────
@@ -615,9 +658,15 @@
     render: function (container) {
       var teleprompterChecked = getSetting('tunerTeleprompter', false) ? 'checked' : '';
       container.innerHTML =
-        '<div class="tuner-note" id="tuner-note">A</div>' +
-        '<div class="tuner-cents in-tune" id="tuner-cents">+0¢</div>' +
-        '<div class="tuner-string" id="tuner-string">String 5 (A)</div>' +
+        '<div class="tuner-note" id="tuner-note">--</div>' +
+        '<div class="tuner-strobe" id="tuner-strobe">' +
+          '<div class="tuner-strobe-center"></div>' +
+          '<div class="tuner-strobe-needle" id="tuner-needle" style="left:50%;"></div>' +
+          '<div class="tuner-strobe-in-tune" id="tuner-strobe-green"></div>' +
+        '</div>' +
+        '<div class="tuner-cents" id="tuner-cents">--</div>' +
+        '<div class="tuner-string" id="tuner-string"></div>' +
+        '<div class="tuner-freq" id="tuner-freq"></div>' +
         '<label class="tuner-teleprompter-check">' +
           '<input type="checkbox" id="tuner-teleprompter" ' + teleprompterChecked + '>' +
           'Display on teleprompter' +
@@ -645,22 +694,67 @@
 
     onState: function (msg) {
       if (msg.tuner) {
-        var note = document.getElementById('tuner-note');
-        var cents = document.getElementById('tuner-cents');
-        var str = document.getElementById('tuner-string');
-        if (note) note.textContent = msg.tuner.note || '--';
-        if (cents) {
-          var c = msg.tuner.cents || 0;
-          cents.textContent = (c > 0 ? '+' : '') + c + '¢';
-          cents.className = 'tuner-cents';
-          if (Math.abs(c) < 3) cents.classList.add('in-tune');
-          else if (c > 0) cents.classList.add('sharp');
-          else cents.classList.add('flat');
-        }
-        if (str && msg.tuner.string) str.textContent = msg.tuner.string;
+        state.tuner = msg.tuner;
+        updateTunerDisplay(msg.tuner);
       }
     },
   });
+
+  function updateTunerDisplay(data) {
+    var note = document.getElementById('tuner-note');
+    var needle = document.getElementById('tuner-needle');
+    var strobeGreen = document.getElementById('tuner-strobe-green');
+    var cents = document.getElementById('tuner-cents');
+    var str = document.getElementById('tuner-string');
+    var freq = document.getElementById('tuner-freq');
+
+    if (!data) data = {};
+    var c = data.cents || 0;
+    var noteName = data.note || '--';
+    var inTune = Math.abs(c) < 3;
+
+    if (note) {
+      note.textContent = noteName;
+      note.className = 'tuner-note';
+      if (!noteName || noteName === '--') note.classList.add('out');
+      else if (inTune) note.classList.add('in-tune');
+      else if (c > 0) note.classList.add('sharp');
+      else note.classList.add('flat');
+    }
+
+    // Strobe needle position: cents -50 to +50 → 0% to 100% width
+    if (needle) {
+      var clamped = Math.max(-50, Math.min(50, c));
+      var pos = ((clamped + 50) / 100) * 100;
+      needle.style.left = pos + '%';
+    }
+
+    // Green fill when in tune
+    if (strobeGreen) {
+      if (inTune) {
+        strobeGreen.classList.add('active');
+        strobeGreen.classList.add('shimmer');
+        // Width proportional to how in-tune: 3¢ = narrow, 0¢ = full width
+        var greenWidth = Math.max(10, 100 - Math.abs(c) * 20);
+        strobeGreen.style.left = (50 - greenWidth / 2) + '%';
+        strobeGreen.style.width = greenWidth + '%';
+      } else {
+        strobeGreen.classList.remove('active');
+        strobeGreen.classList.remove('shimmer');
+      }
+    }
+
+    if (cents) {
+      cents.textContent = (c > 0 ? '+' : '') + c.toFixed(1) + '\u00A2';
+      cents.className = 'tuner-cents';
+      if (inTune) cents.classList.add('in-tune');
+      else if (c > 0) cents.classList.add('sharp');
+      else cents.classList.add('flat');
+    }
+
+    if (str) str.textContent = data.string || '';
+    if (freq) freq.textContent = data.frequency ? data.frequency.toFixed(1) + ' Hz' : '';
+  }
 
   // ════════════════════════════════════════════════════════
   // ─── PAGE: GTR FX ────────────────────────────────────
@@ -697,6 +791,19 @@
         ['delay-time', 'feedback', 'mod-rate', 'mod-depth'].forEach(function (id) {
           var el = document.getElementById('fx-' + id);
           if (el && msg.fx[id]) el.textContent = msg.fx[id];
+        });
+      }
+      // Live FX params from OSC feedback
+      if (msg.fxParams) {
+        var vals = { 'delay-time': '--', 'feedback': '--', 'mod-rate': '--', 'mod-depth': '--' };
+        // GTR track = 6, FX = 1, params 1-4
+        if (msg.fxParams['6-1-1'] !== undefined) vals['delay-time'] = Math.round(msg.fxParams['6-1-1'] * 100) + '%';
+        if (msg.fxParams['6-1-2'] !== undefined) vals['feedback'] = Math.round(msg.fxParams['6-1-2'] * 100) + '%';
+        if (msg.fxParams['6-1-3'] !== undefined) vals['mod-rate'] = (msg.fxParams['6-1-3'] * 20).toFixed(1) + ' Hz';
+        if (msg.fxParams['6-1-4'] !== undefined) vals['mod-depth'] = Math.round(msg.fxParams['6-1-4'] * 100) + '%';
+        Object.keys(vals).forEach(function (id) {
+          var el = document.getElementById('fx-' + id);
+          if (el) el.textContent = vals[id];
         });
       }
     },
@@ -747,7 +854,8 @@
     var html = '';
     queue.forEach(function (song, i) {
       var active = i === activeIndex ? ' active' : '';
-      html += '<div class="queue-item' + active + '">';
+      html += '<div class="queue-item' + active + '" data-queue-index="' + i + '" draggable="true">';
+      html += '  <span class="queue-drag-handle">⋮⋮</span>';
       html += '  <span class="song-title">' + (song.title || 'Unknown') + '</span>';
       html += '  <span class="song-artist">' + (song.artist || '') + '</span>';
       html += '  <div class="queue-controls">';
@@ -767,6 +875,42 @@
     el.querySelectorAll('[data-action="remove"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         sendCommand('queue_remove', { index: parseInt(this.dataset.index) });
+      });
+    });
+
+    // Drag reorder support
+    var dragSrc = null;
+    el.querySelectorAll('.queue-item').forEach(function (item) {
+      item.addEventListener('touchstart', function (e) {
+        dragSrc = this;
+        this.classList.add('queue-dragging');
+      }, { passive: true });
+
+      item.addEventListener('touchmove', function (e) {
+        if (!dragSrc) return;
+        e.preventDefault();
+        var touch = e.touches[0];
+        var target = document.elementFromPoint(touch.clientX, touch.clientY);
+        var targetItem = target ? target.closest('.queue-item') : null;
+        if (targetItem && targetItem !== dragSrc) {
+          var items = Array.from(el.querySelectorAll('.queue-item'));
+          var srcIdx = items.indexOf(dragSrc);
+          var tgtIdx = items.indexOf(targetItem);
+          if (srcIdx >= 0 && tgtIdx >= 0 && srcIdx !== tgtIdx) {
+            if (srcIdx < tgtIdx) {
+              el.insertBefore(dragSrc, targetItem.nextSibling);
+            } else {
+              el.insertBefore(dragSrc, targetItem);
+            }
+          }
+        }
+      });
+
+      item.addEventListener('touchend', function () {
+        if (dragSrc) {
+          dragSrc.classList.remove('queue-dragging');
+          dragSrc = null;
+        }
       });
     });
   }
@@ -904,6 +1048,214 @@
       });
     },
   });
+
+  // ════════════════════════════════════════════════════════
+  // ─── PAGE: MIXER ──────────────────────────────────────
+  // ════════════════════════════════════════════════════════
+
+  var DEFAULT_TRACK_NAMES = ['DRUMS','BASS','PADS','LEADS','PLUCKS','GTR','VOX','MASTER'];
+
+  registerPage('mixer', {
+    render: function (container) {
+      container.innerHTML =
+        '<div class="mixer-header">' +
+          '<h2>Mixer</h2>' +
+          '<button class="mixer-return" id="mixer-return">← Back</button>' +
+        '</div>' +
+        '<div class="mixer-channels" id="mixer-channels">' +
+          '<div style="text-align:center;color:#666;padding:40px;font-size:14px;">No track data</div>' +
+        '</div>';
+    },
+
+    onActivate: function () {
+      document.getElementById('mixer-return').addEventListener('click', function () {
+        navigateTo('home');
+      });
+      setKnobLabels({
+        1: { name: 'VOX', value: formatDB(state.trackVolumes[6] || state.trackVolumes['6']), color: '#1abc9c' },
+        2: { name: 'GTR', value: formatDB(state.trackVolumes[5] || state.trackVolumes['5']), color: '#ff8800' },
+        3: { name: 'BASS', value: formatDB(state.trackVolumes[1] || state.trackVolumes['1']), color: '#3399ff' },
+        4: { name: 'REV MST', value: '--', color: '#9b59b6' },
+      });
+      renderMixer();
+    },
+
+    onState: function (msg) {
+      renderMixer();
+    },
+  });
+
+  function renderMixer() {
+    var el = document.getElementById('mixer-channels');
+    if (!el) return;
+
+    var levels = state.trackLevels || [];
+    var volumes = state.trackVolumes || {};
+    var mutes = state.trackMutes || {};
+    var names = state.trackNames || {};
+    if (Object.keys(names).length === 0) names = {};
+
+    // Use trackLevels from bridge_state.json if available
+    var maxChannels = Math.max(8, levels.length || 0);
+    if (maxChannels === 0) {
+      el.innerHTML = '<div style="text-align:center;color:#555;padding:40px;font-size:14px;">Waiting for REAPER data...</div>';
+      return;
+    }
+
+    var html = '';
+    for (var i = 0; i < maxChannels; i++) {
+      var idx = i + 1;
+      var name = names[idx] || names[String(idx)] || (DEFAULT_TRACK_NAMES[i] || ('Track ' + idx));
+      var level = levels[i] !== undefined ? levels[i] : 0;
+      var vol = volumes[idx] || volumes[String(idx)];
+      var muted = mutes[idx] || mutes[String(idx)] || false;
+      var dbStr = formatDB(vol);
+      var pct = Math.min(100, Math.max(0, level * 100));
+      var barColor = pct > 85 ? '#e74c3c' : pct > 60 ? '#f1c40f' : '#2ecc71';
+      var muteClass = muted ? ' muted' : '';
+
+      html += '<div class="mixer-channel' + muteClass + '">';
+      html += '  <div class="mc-label">' + escapeHtml(name) + '</div>';
+      html += '  <div class="mc-meter">';
+      html += '    <div class="mc-meter-fill" style="width:' + pct + '%;background:' + barColor + ';"></div>';
+      html += '  </div>';
+      html += '  <div class="mc-values">';
+      html += '    <span class="mc-level">' + pct.toFixed(0) + '%</span>';
+      html += '    <span class="mc-db">' + dbStr + '</span>';
+      html += '  </div>';
+      html += '  <button class="mc-mute-btn" data-track="' + idx + '">' + (muted ? 'UNMUTE' : 'MUTE') + '</button>';
+      html += '</div>';
+    }
+    el.innerHTML = html;
+
+    el.querySelectorAll('.mc-mute-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var track = parseInt(this.dataset.track);
+        var currentlyMuted = state.trackMutes[track] || state.trackMutes[String(track)];
+        sendCommand('mute', { track: track, state: !currentlyMuted });
+      });
+    });
+  }
+
+  function formatDB(vol) {
+    if (vol === undefined || vol === null) return '-- dB';
+    if (typeof vol === 'number') {
+      if (vol <= 0) return '-∞ dB';
+      return (20 * Math.log10(vol)).toFixed(1) + ' dB';
+    }
+    return '-- dB';
+  }
+
+  // ════════════════════════════════════════════════════════
+  // ─── PAGE: VST SETTINGS ──────────────────────────────
+  // ════════════════════════════════════════════════════════
+
+  registerPage('vst-settings', {
+    render: function (container) {
+      container.innerHTML =
+        '<div class="vst-settings-header">' +
+          '<h2>VST Settings</h2>' +
+          '<button class="vst-return" id="vst-return">← Back</button>' +
+        '</div>' +
+        '<div class="vst-settings-grid">' +
+          '<div class="vst-card" id="vst-card-pads">' +
+            '<div class="vst-card-name">PADS</div>' +
+            '<div class="vst-card-sub">Vital / Surge XT</div>' +
+            '<button class="vst-preset-btn" data-track="3">Next Preset</button>' +
+          '</div>' +
+          '<div class="vst-card" id="vst-card-leads">' +
+            '<div class="vst-card-name">LEADS</div>' +
+            '<div class="vst-card-sub">Vital / Surge XT</div>' +
+            '<button class="vst-preset-btn" data-track="4">Next Preset</button>' +
+          '</div>' +
+          '<div class="vst-card" id="vst-card-plucks">' +
+            '<div class="vst-card-name">PLUCKS</div>' +
+            '<div class="vst-card-sub">Vital / Surge XT</div>' +
+            '<button class="vst-preset-btn" data-track="5">Next Preset</button>' +
+          '</div>' +
+          '<div class="vst-card" id="vst-card-bass">' +
+            '<div class="vst-card-name">BASS</div>' +
+            '<div class="vst-card-sub">Vital / Surge XT</div>' +
+            '<button class="vst-preset-btn" data-track="2">Next Preset</button>' +
+          '</div>' +
+        '</div>';
+    },
+
+    onActivate: function () {
+      document.getElementById('vst-return').addEventListener('click', function () {
+        navigateTo('home');
+      });
+      var vstPage = document.getElementById('page-vst-settings');
+      if (vstPage) {
+        vstPage.querySelectorAll('.vst-preset-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var track = parseInt(this.dataset.track);
+            sendCommand('fxParam', { trackIdx: track, fxIdx: 1, paramIdx: 0, value: 1 });
+            this.style.background = '#2ecc71';
+            this.style.color = '#000';
+            var self = this;
+            setTimeout(function () { self.style.background = ''; self.style.color = ''; }, 300);
+          });
+        });
+      }
+    },
+  });
+
+  // ════════════════════════════════════════════════════════
+  // ─── PAGE: BATTERY MONITOR ───────────────────────────
+  // ════════════════════════════════════════════════════════
+
+  registerPage('battery', {
+    render: function (container) {
+      container.innerHTML =
+        '<div class="battery-header">' +
+          '<h2>Battery Monitor</h2>' +
+          '<button class="battery-return" id="battery-return">← Back</button>' +
+        '</div>' +
+        '<div class="battery-cards">' +
+          '<div class="battery-card" id="battery-main">' +
+            '<div class="battery-card-label">Ecoflow Inverter</div>' +
+            '<div class="battery-card-pct" id="bat-pct">--%</div>' +
+            '<div class="battery-card-watts" id="bat-watts">--W</div>' +
+            '<div class="battery-card-eta" id="bat-eta">ETA: --</div>' +
+          '</div>' +
+          '<div class="battery-card" id="battery-aux">' +
+            '<div class="battery-card-label">Aux Battery</div>' +
+            '<div class="battery-card-pct" id="bat-aux-pct">--%</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="text-align:center;color:#555;padding:20px;font-size:12px;">' +
+          'Ecoflow API integration pending.<br>Connect Ecoflow to WiFi network.' +
+        '</div>';
+    },
+
+    onActivate: function () {
+      document.getElementById('battery-return').addEventListener('click', function () {
+        navigateTo('home');
+      });
+      fetchBatteryData();
+    },
+  });
+
+  function fetchBatteryData() {
+    // Ecoflow API — uses local HTTP API on the Ecoflow device
+    // Endpoint: http://<ecoflow-ip>/api/v1/status
+    // Future: uncomment when Ecoflow IP is configured
+    /*
+    var ecoflowIP = getSetting('ecoflowIP', '192.168.1.200');
+    fetch('http://' + ecoflowIP + '/api/v1/status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var pct = document.getElementById('bat-pct');
+        var watts = document.getElementById('bat-watts');
+        var eta = document.getElementById('bat-eta');
+        if (pct) pct.textContent = (data.soc || '--') + '%';
+        if (watts) watts.textContent = (data.wattsOut || '--') + 'W';
+        if (eta) eta.textContent = 'ETA: ' + (data.remainingTime || '--');
+      })
+      .catch(function() {});
+    */
+  }
 
   // ════════════════════════════════════════════════════════
   // ─── PAGE: REQUESTS ──────────────────────────────────

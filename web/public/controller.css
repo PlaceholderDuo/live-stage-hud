@@ -290,29 +290,86 @@ html, body {
   margin-top: 2px;
 }
 
-/* === Page: Tuner === */
+/* === Page: Tuner — LockOn-style strobe display === */
 [data-controller-page="tuner"] {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100%;
-  padding: 20px;
+  padding: 16px;
 }
 
 .tuner-note {
-  font-size: 96px;
+  font-size: 110px;
   font-weight: 900;
+  letter-spacing: -4px;
+  line-height: 1;
+  transition: color 0.2s;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -2px;
-  transition: color 0.15s;
+}
+
+.tuner-note.out { color: #666; }
+.tuner-note.sharp { color: var(--red); }
+.tuner-note.flat { color: var(--blue); }
+.tuner-note.in-tune { color: var(--green); text-shadow: 0 0 30px rgba(46,204,113,0.6), 0 0 60px rgba(46,204,113,0.3); }
+
+/* LockOn strobe bar */
+.tuner-strobe {
+  width: 90%;
+  max-width: 340px;
+  height: 12px;
+  background: linear-gradient(to right, var(--blue) 0%, var(--blue) 35%, #222 35%, #222 65%, var(--red) 65%, var(--red) 100%);
+  border-radius: 6px;
+  margin: 12px 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #333;
+}
+
+.tuner-strobe-needle {
+  position: absolute;
+  top: -4px;
+  height: 20px;
+  width: 3px;
+  background: #fff;
+  border-radius: 2px;
+  transition: left 0.08s ease-out;
+  box-shadow: 0 0 6px rgba(255,255,255,0.5);
+  z-index: 1;
+}
+
+.tuner-strobe-center {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 100%;
+  background: rgba(255,255,255,0.3);
+  transform: translateX(-50%);
+}
+
+.tuner-strobe-in-tune {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 6px;
+  background: var(--green);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.tuner-strobe-in-tune.active {
+  opacity: 1;
+  box-shadow: 0 0 12px rgba(46,204,113,0.5);
 }
 
 .tuner-cents {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
-  margin-top: 8px;
+  margin-top: 4px;
   font-variant-numeric: tabular-nums;
+  transition: color 0.15s;
 }
 
 .tuner-cents.sharp { color: var(--red); }
@@ -320,35 +377,54 @@ html, body {
 .tuner-cents.in-tune { color: var(--green); }
 
 .tuner-string {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-dim);
-  margin-top: 16px;
+  margin-top: 8px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.tuner-freq {
+  font-size: 12px;
+  color: #555;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
 }
 
 .tuner-teleprompter-check {
-  margin-top: 24px;
+  margin-top: 16px;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-dim);
 }
 
 .tuner-teleprompter-check input[type="checkbox"] {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   accent-color: var(--green);
 }
 
 .tuner-back {
-  margin-top: 16px;
-  padding: 10px 24px;
+  margin-top: 8px;
+  padding: 8px 20px;
   background: var(--surface);
   border: 1px solid #333;
   border-radius: 8px;
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
+}
+
+/* Strobe shimmer animation when in tune */
+@keyframes strobe-shimmer {
+  0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(46,204,113,0.4); }
+  50% { opacity: 0.7; box-shadow: 0 0 20px rgba(46,204,113,0.7); }
+}
+
+.tuner-strobe-in-tune.shimmer {
+  animation: strobe-shimmer 0.8s ease-in-out infinite;
 }
 
 /* === Page: EDM mode === */
@@ -599,48 +675,6 @@ html, body {
   -webkit-overflow-scrolling: touch;
 }
 
-.queue-item {
-  display: flex;
-  align-items: center;
-  padding: 12px;
-  background: var(--surface);
-  border-radius: 8px;
-  margin-bottom: 6px;
-  border: 1px solid #222;
-}
-
-.queue-item.active {
-  border-color: var(--green);
-  background: #0a1a0a;
-}
-
-.queue-item .song-title {
-  font-size: 14px;
-  font-weight: 600;
-  flex: 1;
-}
-
-.queue-item .song-artist {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-right: 12px;
-}
-
-.queue-item .queue-controls {
-  display: flex;
-  gap: 6px;
-}
-
-.queue-item .queue-controls button {
-  padding: 4px 8px;
-  background: #222;
-  border: 1px solid #333;
-  border-radius: 4px;
-  color: var(--text);
-  font-size: 11px;
-  cursor: pointer;
-}
-
 /* === Page: Settings / Troubleshooting === */
 [data-controller-page="settings"] {
   padding: 12px;
@@ -870,4 +904,361 @@ html, body {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+/* === Page: MIXER === */
+[data-controller-page="mixer"] {
+  padding: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.mixer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.mixer-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.mixer-return {
+  padding: 8px 16px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mixer-channels {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mixer-channel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  border: 1px solid #222;
+  transition: opacity 0.2s;
+}
+
+.mixer-channel.muted {
+  opacity: 0.4;
+}
+
+.mc-label {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-width: 70px;
+  color: var(--text);
+}
+
+.mc-meter {
+  flex: 1;
+  height: 8px;
+  background: #111;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mc-meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.15s ease-out;
+}
+
+.mc-values {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 55px;
+}
+
+.mc-level {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.mc-db {
+  font-size: 9px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-mute-btn {
+  padding: 4px 8px;
+  background: #222;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.mc-mute-btn:active {
+  background: #444;
+  color: var(--text);
+}
+
+/* === Page: EDM Knob Value Cards === */
+.edm-knob-card {
+  flex: 1;
+  padding: 10px 6px;
+  background: var(--surface);
+  border-radius: 10px;
+  border: 1px solid #222;
+  text-align: center;
+}
+
+.kv-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.kv-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* === Page: VST Settings === */
+[data-controller-page="vst-settings"] {
+  padding: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.vst-settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.vst-settings-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.vst-return {
+  padding: 8px 16px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.vst-settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  flex: 1;
+  align-content: start;
+}
+
+.vst-card {
+  padding: 20px 14px;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 2px solid #222;
+  text-align: center;
+}
+
+.vst-card-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.vst-card-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.vst-preset-btn {
+  width: 100%;
+  padding: 8px;
+  background: #252525;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.vst-preset-btn:active {
+  background: var(--green);
+  color: #000;
+}
+
+/* === Page: Battery Monitor === */
+[data-controller-page="battery"] {
+  padding: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.battery-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.battery-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.battery-return {
+  padding: 8px 16px;
+  background: var(--surface);
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.battery-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+}
+
+.battery-card {
+  padding: 24px;
+  background: var(--surface);
+  border-radius: 14px;
+  border: 2px solid #222;
+  text-align: center;
+}
+
+.battery-card-label {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.battery-card-pct {
+  font-size: 48px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: var(--yellow);
+  line-height: 1;
+}
+
+.battery-card-watts {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  margin-top: 4px;
+}
+
+.battery-card-eta {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-top: 8px;
+}
+
+/* === Queue Drag Handle === */
+.queue-drag-handle {
+  color: #444;
+  font-size: 14px;
+  cursor: grab;
+  margin-right: 6px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+}
+
+.queue-item.queue-dragging {
+  opacity: 0.5;
+  border-color: var(--orange);
+  box-shadow: 0 0 8px rgba(255,136,0,0.3);
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  border: 1px solid #222;
+}
+
+.queue-item.active {
+  border-color: var(--green);
+  background: #0a1a0a;
+}
+
+.queue-item .song-title {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.queue-item .song-artist {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-right: 12px;
+}
+
+.queue-item .queue-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.queue-item .queue-controls button {
+  padding: 4px 8px;
+  background: #222;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
 }
