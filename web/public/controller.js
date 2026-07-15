@@ -251,10 +251,10 @@
           kl.textContent = state.keysOn ? 'KEYS ON' : 'KEYS OFF';
         }
       }
-      if (msg.activeAmpPreset) {
+      if (msg.activeAmpPreset && msg.activeAmpPreset !== state._lastAmpFromServer) {
+        state._lastAmpFromServer = msg.activeAmpPreset;
         state.activeAmpPreset = msg.activeAmpPreset;
-        var gs = document.getElementById('gtr-amp-sub');
-        if (gs) gs.textContent = msg.activeAmpPreset;
+        updateAmpHomeDisplay(msg.activeAmpPreset);
       }
       if (msg.lyricLines) {
         state.lyricLines = msg.lyricLines;
@@ -315,79 +315,80 @@
 
   registerPage('home', {
     render: function (container) {
+      var ampColor = getAmpColor(state.activeAmpPreset);
+      var ampBadge = getAmpBadge(state.activeAmpPreset);
       container.innerHTML = `
         <div class="home-grid">
-          <!-- Tap Tempo (spans 2 cols) -->
+          <!-- Row 1: MUTE (safety) + START (primary action) — most prominent -->
+          <div class="home-btn mute-btn live" id="btn-mute">
+            <span class="home-btn-label" id="mute-label">LIVE</span>
+            <span class="home-btn-sub" id="mute-sub">Tap to mute vocal</span>
+          </div>
+
+          <div class="home-btn start-btn" id="btn-start">
+            <span class="home-btn-label">▶ START</span>
+            <span class="home-btn-sub">Next song</span>
+          </div>
+
+          <!-- Row 2: Tap Tempo (full width) -->
           <div class="home-btn tap-tempo" id="tap-tempo-btn">
             <span class="bpm-label">BPM</span>
             <span class="bpm-display" id="bpm-display">${state.tempo}</span>
             <div class="pulse-indicator" id="pulse-indicator"></div>
           </div>
 
-          <!-- EDM -->
-          <div class="home-btn" id="btn-edm" style="border-color: #2ecc71;">
-            <span class="home-btn-label" style="color: #2ecc71;">EDM</span>
-            <span class="home-btn-sub">Scene control</span>
+          <!-- Row 3: GTR AMP (current preset displayed) + TUNER -->
+          <div class="home-btn gtr-amp-home" id="btn-gtr-amp" style="border-color: ${ampColor};">
+            <span class="home-btn-label" style="color: ${ampColor};">GTR AMP</span>
+            <span class="home-btn-sub" id="gtr-amp-sub">
+              <span class="amp-dot" id="amp-dot" style="background: ${ampColor};"></span>
+              ${state.activeAmpPreset}
+              <span class="amp-badge" style="color: ${ampColor};">${ampBadge}</span>
+            </span>
           </div>
 
-          <!-- Setlist -->
-          <div class="home-btn" id="btn-setlist" style="border-color: #3399ff;">
-            <span class="home-btn-label" style="color: #3399ff;">Setlist</span>
-            <span class="home-btn-sub">Songs & queue</span>
-          </div>
-
-          <!-- MIXER -->
-          <div class="home-btn" id="btn-mixer" style="border-color: #7f8c8d;">
-            <span class="home-btn-label" style="color: #95a5a6;">Mixer</span>
-            <span class="home-btn-sub">Channel levels</span>
-          </div>
-
-          <!-- Battery Monitor -->
-          <div class="home-btn" id="btn-battery" style="border-color: #f1c40f;">
-            <span class="home-btn-label" style="color: #f1c40f;">Battery</span>
-            <span class="home-btn-sub" id="battery-sub">No data</span>
-          </div>
-
-          <!-- MUTE -->
-          <div class="home-btn mute-btn live" id="btn-mute">
-            <span class="home-btn-label" id="mute-label">LIVE</span>
-            <span class="home-btn-sub" id="mute-sub">Tap to mute vocal</span>
-          </div>
-
-          <!-- TUNER -->
           <div class="home-btn" id="btn-tuner" style="border-color: #ff8800;">
             <span class="home-btn-label" style="color: #ff8800;">Tuner</span>
             <span class="home-btn-sub">Guitar tune</span>
           </div>
 
-          <!-- GTR FX -->
+          <!-- Row 4: EDM + GTR FX -->
+          <div class="home-btn" id="btn-edm" style="border-color: #2ecc71;">
+            <span class="home-btn-label" style="color: #2ecc71;">EDM</span>
+            <span class="home-btn-sub">Scene control</span>
+          </div>
+
           <div class="home-btn" id="btn-gtr-fx" style="border-color: #9b59b6;">
             <span class="home-btn-label" style="color: #9b59b6;">GTR FX</span>
             <span class="home-btn-sub">Delay & mod</span>
           </div>
 
-          <!-- GTR AMP -->
-          <div class="home-btn" id="btn-gtr-amp" style="border-color: #ff8800;">
-            <span class="home-btn-label" style="color: #ff8800;">GTR AMP</span>
-            <span class="home-btn-sub" id="gtr-amp-sub">${state.activeAmpPreset}</span>
+          <!-- Row 5: KEYS + SETLIST -->
+          <div class="home-btn keys-btn ${state.keysOn ? 'on' : 'off'}" id="btn-keys">
+            <span class="home-btn-label" id="keys-label">${state.keysOn ? 'KEYS ON' : 'KEYS OFF'}</span>
+            <span class="home-btn-sub">Hold for VST settings</span>
           </div>
 
-          <!-- KEYS -->
-          <div class="home-btn keys-btn on" id="btn-keys">
-            <span class="home-btn-label" id="keys-label">KEYS ON</span>
-            <span class="home-btn-sub">Tap to mute VST</span>
+          <div class="home-btn" id="btn-setlist" style="border-color: #3399ff;">
+            <span class="home-btn-label" style="color: #3399ff;">Setlist</span>
+            <span class="home-btn-sub">Songs & queue</span>
           </div>
 
-          <!-- REQUESTS -->
+          <!-- Row 6: MIXER + REQUESTS -->
+          <div class="home-btn" id="btn-mixer" style="border-color: #7f8c8d;">
+            <span class="home-btn-label" style="color: #95a5a6;">Mixer</span>
+            <span class="home-btn-sub">Channel levels</span>
+          </div>
+
           <div class="home-btn" id="btn-requests" style="border-color: #ff8800;">
             <span class="home-btn-label" style="color: #ff8800;">Requests <span class="req-badge" id="req-badge" style="display:none;">0</span></span>
             <span class="home-btn-sub" id="requests-sub">Guest songs</span>
           </div>
 
-          <!-- START -->
-          <div class="home-btn start-btn" id="btn-start">
-            <span class="home-btn-label">▶ START</span>
-            <span class="home-btn-sub">Next song</span>
+          <!-- Row 7: Battery -->
+          <div class="home-btn" id="btn-battery" style="border-color: #f1c40f;">
+            <span class="home-btn-label" style="color: #f1c40f;">Battery</span>
+            <span class="home-btn-sub" id="battery-sub">No data</span>
           </div>
         </div>
 
@@ -396,9 +397,6 @@
           <div class="small-btn" id="btn-bumper">
             <span>♪ Bumper</span>
             <span class="double-tap-hint">⟐⟐ DOUBLE TAP</span>
-          </div>
-          <div class="small-btn" id="btn-lights">
-            <span>Lights</span>
           </div>
           <div class="small-btn" id="btn-settings">
             <span>⚙ Settings</span>
@@ -516,16 +514,15 @@
       document.getElementById('btn-settings').addEventListener('click', function () {
         navigateTo('settings');
       });
-
-      // Lights (placeholder)
-      document.getElementById('btn-lights').addEventListener('click', function () {
-        // TODO
-      });
     },
 
     onState: function (msg) {
       if (msg.bpm) {
         document.getElementById('bpm-display').textContent = Math.round(msg.bpm);
+      }
+      if (msg.activeAmpPreset && msg.activeAmpPreset !== state.activeAmpPreset) {
+        state.activeAmpPreset = msg.activeAmpPreset;
+        updateAmpHomeDisplay(msg.activeAmpPreset);
       }
     },
   });
@@ -984,7 +981,7 @@
   });
 
   // ════════════════════════════════════════════════════════
-  // ─── PAGE: GTR AMP PRESETS ──────────────────────────
+  // ─── GTR AMP PRESETS ─────────────────────────────────
   // ════════════════════════════════════════════════════════
 
   var gtrAmpPresets = [
@@ -996,6 +993,42 @@
     { name: 'TRLX',     cln: false, color: '#ff8800' },
     { name: 'TWD',      cln: false, color: '#ff8800' },
   ];
+
+  function getAmpColor(presetName) {
+    for (var i = 0; i < gtrAmpPresets.length; i++) {
+      if (gtrAmpPresets[i].name === presetName) return gtrAmpPresets[i].color;
+    }
+    return '#ff8800';
+  }
+
+  function getAmpBadge(presetName) {
+    for (var i = 0; i < gtrAmpPresets.length; i++) {
+      if (gtrAmpPresets[i].name === presetName) return gtrAmpPresets[i].cln ? 'CLEAN' : 'DRIVE';
+    }
+    return 'DRIVE';
+  }
+
+  function updateAmpHomeDisplay(preset) {
+    var sub = document.getElementById('gtr-amp-sub');
+    var btn = document.getElementById('btn-gtr-amp');
+    var dot = document.getElementById('amp-dot');
+    var color = getAmpColor(preset);
+    if (btn) btn.style.borderColor = color;
+    if (dot) dot.style.background = color;
+    if (sub) {
+      sub.innerHTML = '<span class="amp-dot" id="amp-dot" style="background:' + color + ';"></span> ' + preset + ' <span class="amp-badge" style="color:' + color + ';">' + getAmpBadge(preset) + '</span>';
+      sub.id = 'gtr-amp-sub';
+    }
+    // Confirmation flash on home button
+    if (btn) {
+      btn.style.boxShadow = '0 0 18px ' + color;
+      btn.style.transform = 'scale(1.03)';
+      setTimeout(function () {
+        btn.style.boxShadow = '';
+        btn.style.transform = '';
+      }, 400);
+    }
+  }
 
   registerPage('gtr-amp', {
     render: function (container) {
@@ -1013,6 +1046,7 @@
           '<div class="gtr-amp-preset' + active + '" data-preset="' + p.name + '" style="border-color: ' + p.color + ';">' +
             '<div class="preset-name" style="color: ' + p.color + ';">' + p.name + '</div>' +
             '<div class="preset-badge" style="color: ' + p.color + ';">' + badge + '</div>' +
+            '<div class="preset-confirm" style="background:' + p.color + ';">✓</div>' +
           '</div>';
       });
 
@@ -1022,15 +1056,33 @@
       container.querySelectorAll('.gtr-amp-preset').forEach(function (el) {
         el.addEventListener('click', function () {
           var preset = this.dataset.preset;
+          if (state.activeAmpPreset === preset) return;
+
           state.activeAmpPreset = preset;
           sendCommand('gtr_amp_preset', { preset: preset });
+
+          // Confirmation animation on the tapped preset
+          var confirm = this.querySelector('.preset-confirm');
+          this.classList.add('applied');
+          if (confirm) confirm.classList.add('show');
+
+          // Deactivate others
           container.querySelectorAll('.gtr-amp-preset').forEach(function (b) {
             b.classList.remove('active');
+            var c = b.querySelector('.preset-confirm');
+            if (c) c.classList.remove('show');
           });
+
           this.classList.add('active');
-          // Update subtitle on home page
-          var homeSub = document.getElementById('gtr-amp-sub');
-          if (homeSub) homeSub.textContent = preset;
+
+          // Clear confirmation after animation
+          var self = this;
+          setTimeout(function () {
+            self.classList.remove('applied');
+            if (confirm) confirm.classList.remove('show');
+          }, 600);
+
+          updateAmpHomeDisplay(preset);
         });
       });
 
