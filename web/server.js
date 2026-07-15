@@ -94,12 +94,55 @@ function bumperPlay(trackPath) {
 
 function bumperStop() {
   if (bumperProcess) {
-    console.log('Bumper: stop');
+    console.log('Bumper: stop (fade out)');
+    bumperFadeOut();
+  }
+}
+
+function bumperStopImmediate() {
+  if (bumperProcess) {
+    console.log('Bumper: stop (immediate)');
     bumperProcess.kill();
     bumperProcess = null;
   }
   bumperPlaying = false;
   broadcastBumperStatus();
+}
+
+function bumperFadeOut() {
+  if (!bumperProcess) return;
+  const currentTrack = bumperPlaylist[bumperIndex];
+  if (currentTrack && fs.existsSync(currentTrack)) {
+    bumperProcess.kill();
+    bumperProcess = null;
+    const fadeFile = `/tmp/bumper-fade-${Date.now()}.wav`;
+    const ffmpeg = spawn('ffmpeg', [
+      '-sseof', '-4',
+      '-i', currentTrack,
+      '-af', 'afade=t=out:st=0:d=4',
+      '-y', fadeFile
+    ], { stdio: 'ignore' });
+    ffmpeg.on('exit', () => {
+      if (fs.existsSync(fadeFile)) {
+        bumperProcess = spawn('afplay', [fadeFile], { stdio: 'ignore' });
+        bumperProcess.on('exit', () => {
+          try { fs.unlinkSync(fadeFile); } catch(e) {}
+          bumperPlaying = false;
+          bumperProcess = null;
+          broadcastBumperStatus();
+        });
+      } else {
+        bumperPlaying = false;
+        broadcastBumperStatus();
+      }
+    });
+    bumperPlaying = true; // still "playing" during fade out
+  } else {
+    bumperProcess.kill();
+    bumperProcess = null;
+    bumperPlaying = false;
+    broadcastBumperStatus();
+  }
 }
 
 function bumperToggle() {
@@ -220,8 +263,11 @@ const server = http.createServer((req, res) => {
     if (action === 'play') {
       bumperPlay(null);
       res.end(JSON.stringify(getBumperStatus()));
-    } else if (action === 'stop') {
+    } else if (action === 'stop' || action === 'stop-graceful') {
       bumperStop();
+      res.end(JSON.stringify(getBumperStatus()));
+    } else if (action === 'stop-immediate') {
+      bumperStopImmediate();
       res.end(JSON.stringify(getBumperStatus()));
     } else if (action === 'toggle') {
       bumperToggle();
@@ -299,6 +345,21 @@ const io = new Server(server);
 
 io.on('connection', (socket) => {
   console.log('Client connected (' + io.engine.clientsCount + ' total)');
+
+  socket.on('action', (data) => {
+    // Forward action events to REAPER bridge (port 3000) via HTTP
+    try {
+      const body = JSON.stringify(data);
+      const req = http.request({
+        hostname: 'localhost', port: 3000, path: '/api/action',
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      }, () => {});
+      req.on('error', () => {});
+      req.write(body);
+      req.end();
+    } catch(e) {}
+    io.emit('command_ack', { type: 'command_ack', action: data.type, status: 'relayed' });
+  });
 
   socket.on('message', (raw) => {
     let msg;

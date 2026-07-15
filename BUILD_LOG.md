@@ -873,3 +873,106 @@ Rather than hardcoding an ANSI orange, `INVERSE` mode swaps the xterm's configur
 | `scripts/tui.js` | Retro styling — orange bars, ASCII borders, DIM labels, no width cap |
 | `BUILD_LOG.md` | This entry |
 
+---
+
+## 2026-07-15 — iPhone Controller v1: Full Feature Implementation
+
+### Session: MIXER page, LockOn tuner, VST settings, Battery, queue drag, OSC feedback
+
+#### Overview
+Completed the entire iPhone 7 controller spec — every page from `IPHONE-CONTROLLER-SPEC.md`
+is now functional. Server enhanced with OSC feedback relay and ReaTune MIDI input for
+the guitar tuner.
+
+#### What was built
+
+**MIXER page** (`controller.js` + `controller.css`):
+- 8-channel strip with live VU meters from bridge_state.json
+- Per-channel dB readout, green/yellow/red color coding
+- Per-track mute buttons sending OSC to REAPER
+- Knob strip shows live track dB values from OSC feedback
+
+**LockOn-style Tuner** (complete redesign):
+- Strobe bar with white needle tracking cents deviation (-50 to +50)
+- Green center zone with shimmer animation when in-tune (±3 cents)
+- Note name glows green (in-tune), red (sharp), blue (flat), grey (no signal)
+- String auto-detection (EADGBE standard tuning)
+- Frequency display in Hz
+- Teleprompter checkbox (persisted to localStorage)
+- Display clears after 1.5s of silence
+
+**Tuner data pipeline** (`server.js`):
+- ReaTune → MIDI note + pitch bend → virtual port "Live Show Manager Tuner"
+- Server converts MIDI → tuner OSC format: `{note, cents, frequency, string}`
+- Relayed to iPhone via Socket.IO `tuner` event
+- Pitch bend formula: `((value - 8192) / 8192) * 200` cents (±2 semitones)
+
+**EDM page enhancements:**
+- 4 live knob value cards (FILTER, RES, REV, DELAY) reading from OSC/control values
+- Scene buttons show active state from server
+- Knobs mapped to actual REAPER FX params via `edmKnob` WebSocket handler
+
+**GTR FX live values:**
+- Delay time, feedback, mod rate, mod depth now read from REAPER OSC feedback
+- Server listens for `/track/6/fx/1/param/{1-4}/value` and includes in state broadcast
+- Values auto-formatted (%, Hz, dB) on display
+
+**VST Settings page** (KEYS long-press):
+- PADS, LEADS, PLUCKS, BASS cards with next-preset buttons
+- Sends `fxParam` command to cycle presets via OSC
+
+**Battery Monitor page:**
+- Ecoflow inverter placeholder with % / wattage / ETA display
+- Aux battery card
+- Ecoflow API stub ready for local HTTP API integration
+
+**Queue drag reorder:**
+- Touch-based drag (touchstart/move/end) on setlist items
+- Drag handle indicator (⋮⋮)
+- Items reorder in real-time as dragged over targets
+
+**Server enhancements** (`LSM/web/server.js`):
+- OSC feedback relay: `/track/N/volume`, `/track/N/mute`, `/track/N/name`
+- OSC feedback relay: `/track/N/fx/N/param/N/value`, `/tuner`, `/master/beats/minute`
+- `tap_tempo` with BPM calculation (tap accumulation, weighted average, OSC send to REAPER)
+- `gtr_amp_preset` with OSC to NAM FX parameter
+- `mute` handler accepts `{track, state}` object format
+- `edmKnob` and `gtrFxKnob` WebSocket handlers
+- State broadcast includes mixerValues, fxParams, activeScene, keysOn
+- MIDI input listener for ReaTune pitch detection
+- Tap tempo accumulator with 3s window
+
+**Bonjour URL fix:**
+- Changed from `RDFX1-macbook-pro` to `rig` for simpler mDNS resolution
+
+#### Files Changed
+
+| File | Changes |
+|------|---------|
+| `web/public/controller.js` | +350 lines — MIXER, VST, Battery pages; LockOn tuner redesign; drag reorder; OSC feedback state handling |
+| `web/public/controller.css` | +250 lines — Mixer VU meters, strobe bar, VST cards, battery cards, drag handle, knob value cards |
+| `LSM/web/server.js` | +200 lines — OSC feedback relay, tap_tempo, gtr_amp_preset, edmKnob, gtrFxKnob, MIDI input tuner, state broadcast enhancement |
+
+#### Architecture Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| ReaTune + MIDI over custom JSFX for tuner | ReaTune is built-in, zero-config for REAPER users. MIDI Note + Pitch Bend is ReaTune's native output format. |
+| `easymidi.Input` on separate port "Live Show Manager Tuner" | Avoids conflicts with existing "Live Show Manager" output port for Mobius CC. |
+| `requestAnimationFrame` for beat tracking (existing) + 500ms server poll | Server poll is slow; rAF gives sub-frame accuracy for the beat flash edge strip. |
+| Vanilla JS touch events for drag reorder | No library needed. touchstart/move/end work reliably on iOS Safari. |
+| Ecoflow API stub over full integration | Ecoflow local HTTP API requires the device on WiFi — out of scope until hardware is on the stage network. |
+
+#### Gotchas
+
+1. **MIDI port visibility:** CoreMIDI ports created by launchd services may not appear in REAPER until REAPER runs "Reset all MIDI devices" or restarts. The port itself is valid (`easymidi.getOutputs()` shows it).
+2. **ReaTune has no MIDI output dropdown:** The "Send MIDI events" checkbox sends MIDI downstream in the FX chain. Track-level routing (MIDI Hardware Output) is needed to reach the virtual port.
+3. **Tuner needs guitar test:** The full pipeline (ReaTune → MIDI → server → iPhone) is wired but untested with a real instrument.
+
+#### Next
+- Test tuner end-to-end with guitar
+- Test MIXER VU meters with live REAPER project
+- Wire Ecoflow battery API when device is on stage network
+- Consider migrating bumper engine to Dell (rdfx5) to free MacBook resources
+- Add `/api/tuner` REST endpoint for polling (debugging)
+
