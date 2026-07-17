@@ -976,3 +976,75 @@ the guitar tuner.
 - Consider migrating bumper engine to Dell (rdfx5) to free MacBook resources
 - Add `/api/tuner` REST endpoint for polling (debugging)
 
+---
+
+## 2026-07-15 — Local Playback Engine + TUI Transport
+
+### Session: Standalone HUD mode (no REAPER transport needed)
+
+#### Overview
+The HUD teleprompter and iPhone controller depended entirely on REAPER transport
+to advance position. This session added a **local playback engine** inside the
+Node.js server so the entire system works standalone — lyrics advance, beats
+count, progress bar moves — without REAPER even running.
+
+#### Local Playback Engine (`server.js`)
+
+- 60fps position tracker (`setInterval` every 16ms)
+- Reads song duration from chordpro `@bar=N` annotations (falls back to meta.json `duration_bars`)
+- Auto-advances to next song when position reaches duration
+- Tracks `localPlaying`, `localPlayOffset`, and `localPlayStartTime` to maintain
+  accurate wall-clock position
+- `state.playing` and `state.position` are driven by local engine when REAPER
+  is disconnected
+- Song transition resets position to 0 and recomputes sections
+
+#### Stale Bridge Detection
+
+- `bridge_state.json` file age checked (`stat.mtimeMs`)
+- If file hasn't been modified in >5s, server marks `state.connected = false`
+- When disconnected, server ignores REAPER position/playing from stale data
+- Uses `||` (fallback) instead of `if` for all state fields so stale data
+  still provides song metadata (title, artist, key, BPM) while local engine
+  drives timing
+
+#### Transport API (`POST /api/local/*`)
+
+| Endpoint | Action |
+|----------|--------|
+| `/api/local/play` | Start/resume local playback |
+| `/api/local/pause` | Pause (preserves position) |
+| `/api/local/stop` | Stop (reset position to 0) |
+| `/api/local/next` | Jump to next song, start playing |
+| `/api/local/prev` | Jump to previous song |
+| `/api/local/jump` | Jump to specific song index |
+
+#### TUI Integration (`scripts/tui.js`)
+
+- New `hudPost()` helper — sends POST to port 3000 `/api/local/*` endpoints
+- Added `hudReaperPlaying` state variable synced with local playback
+- Key bindings:
+  - `Shift+P` — HUD play/pause toggle
+  - `Shift+N` — HUD next song
+  - `Shift+B` — HUD prev song
+  - `Shift+S` — HUD stop
+  - `Space` — now controls both singer queue AND HUD together
+- HUD playback status shown in NOW PLAYING box: "● HUD PLAYING (local)" / "○ HUD stopped"
+
+#### Duration Fix
+
+- Server now computes song duration from chordpro `@bar=N` annotations
+  instead of relying on meta.json `duration_bars` (which was often wrong)
+- Max bar found by scanning all extracted lyric lines
+- Falls back to meta.json `duration_bars` if chordpro has no annotations
+- Section computation now uses the correct total bar count from chordpro data
+
+#### Future: Reaper / No-Reaper Switch
+
+A planned UI toggle will let the performer switch between:
+- **REAPER mode:** position driven by REAPER transport via Lua runner + bridge_state.json
+- **Local mode:** position driven by server's internal 60fps clock
+
+Currently, the mode is auto-detected: if bridge_state.json is fresh (<5s old), REAPER mode
+is used. Otherwise, local mode engages automatically.
+
