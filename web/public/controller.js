@@ -318,6 +318,16 @@
       var ampColor = getAmpColor(state.activeAmpPreset);
       var ampBadge = getAmpBadge(state.activeAmpPreset);
       container.innerHTML = `
+        <div class="transport-bar" id="transport-bar">
+          <button class="trans-btn" id="btn-prev">⏮</button>
+          <button class="trans-btn trans-play" id="btn-play">▶ PLAY</button>
+          <button class="trans-btn" id="btn-next">⏭</button>
+          <div class="trans-info">
+            <div class="trans-song" id="trans-song">${state.activeSong || 'No song loaded'}</div>
+            <div class="trans-pos" id="trans-pos">--</div>
+          </div>
+        </div>
+
         <div class="home-grid">
           <!-- Row 1: MUTE (safety) + START (primary action) — most prominent -->
           <div class="home-btn mute-btn live" id="btn-mute">
@@ -413,6 +423,23 @@
         3: { name: 'BASS', value: '--', color: '#3399ff' },
         4: { name: 'REV MST', value: '--', color: '#9b59b6' },
       });
+
+      // Transport: Play/Pause
+      document.getElementById('btn-play').addEventListener('click', function () {
+        sendCommand('play');
+      });
+
+      // Transport: Next song
+      document.getElementById('btn-next').addEventListener('click', function () {
+        sendCommand('next');
+      });
+
+      // Transport: Prev song
+      document.getElementById('btn-prev').addEventListener('click', function () {
+        sendCommand('start_song'); // same as START
+      });
+
+      updateTransportDisplay();
 
       // Tap Tempo
       document.getElementById('tap-tempo-btn').addEventListener('click', function () {
@@ -520,12 +547,36 @@
       if (msg.bpm) {
         document.getElementById('bpm-display').textContent = Math.round(msg.bpm);
       }
-      if (msg.activeAmpPreset && msg.activeAmpPreset !== state.activeAmpPreset) {
+      if (msg.activeAmpPreset && msg.activeAmpPreset !== state._lastAmpFromServer) {
+        state._lastAmpFromServer = msg.activeAmpPreset;
         state.activeAmpPreset = msg.activeAmpPreset;
         updateAmpHomeDisplay(msg.activeAmpPreset);
       }
+      updateTransportDisplay();
     },
   });
+
+  function updateTransportDisplay() {
+    var song = document.getElementById('trans-song');
+    var pos = document.getElementById('trans-pos');
+    var btn = document.getElementById('btn-play');
+    if (song) song.textContent = state.activeSong || 'No song loaded';
+    if (pos) {
+      var bar = state.tempo > 0 ? Math.floor((state.position || 0) * state.tempo / 240) + 1 : 1;
+      pos.textContent = 'Bar ' + bar + ' \u00B7 ' + formatTime(state.position) + ' / ' + formatTime(state.duration);
+    }
+    if (btn) {
+      btn.textContent = state.playing ? '\u23F8 PAUSE' : '\u25B6 PLAY';
+      btn.className = 'trans-btn trans-play' + (state.playing ? ' playing' : '');
+    }
+  }
+
+  function formatTime(secs) {
+    if (!secs || secs < 0) return '0:00';
+    var m = Math.floor(secs / 60);
+    var s = Math.floor(secs % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
 
   // ─── KEYS Toggle ────────────────────────────────────
   function toggleKeys() {

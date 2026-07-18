@@ -94,6 +94,69 @@ html, body {
 .status-dot.disconnected { background: var(--red); }
 .status-dot.connecting { background: var(--yellow); }
 
+/* === Transport Bar === */
+.transport-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid #222;
+  flex-shrink: 0;
+  min-height: 44px;
+}
+
+.trans-btn {
+  padding: 6px 10px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.trans-btn:active {
+  background: #333;
+}
+
+.trans-play {
+  min-width: 72px;
+  font-weight: 700;
+  font-size: 13px;
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.trans-play.playing {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+
+.trans-info {
+  flex: 1;
+  margin-left: 6px;
+  min-width: 0;
+}
+
+.trans-song {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trans-pos {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+
 /* === Page Container === */
 #page-container {
   flex: 1;
