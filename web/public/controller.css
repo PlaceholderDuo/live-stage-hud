@@ -21,8 +21,8 @@
   --cyan: #1abc9c;
   --purple: #9b59b6;
   --yellow: #f1c40f;
-  --knob-strip-height: 64px;
-  --status-bar-height: 32px;
+  --knob-strip-height: 48px;
+  --status-bar-height: 22px;
 }
 
 html, body {
@@ -36,6 +36,9 @@ html, body {
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
+  position: fixed;
+  top: 0;
+  left: 0;
 }
 
 #app {
@@ -43,6 +46,7 @@ html, body {
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 /* === Beat Flash Edge Strip === */
@@ -75,17 +79,17 @@ html, body {
   height: var(--status-bar-height);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
+  gap: 6px;
+  padding: 0 8px;
   background: var(--surface);
-  font-size: 12px;
+  font-size: 10px;
   color: var(--text-dim);
   flex-shrink: 0;
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -98,19 +102,19 @@ html, body {
 .transport-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: 4px;
+  padding: 3px 6px;
   background: var(--surface);
   border-bottom: 1px solid #222;
   flex-shrink: 0;
-  min-height: 44px;
+  min-height: 30px;
 }
 
 .trans-btn {
-  padding: 6px 10px;
+  padding: 4px 8px;
   background: #1a1a1a;
   border: 1px solid #333;
-  border-radius: 6px;
+  border-radius: 5px;
   color: var(--text);
   font-size: 12px;
   cursor: pointer;
@@ -123,9 +127,9 @@ html, body {
 }
 
 .trans-play {
-  min-width: 72px;
+  min-width: 64px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
   border-color: var(--green);
   color: var(--green);
 }
@@ -137,12 +141,12 @@ html, body {
 
 .trans-info {
   flex: 1;
-  margin-left: 6px;
+  margin-left: 4px;
   min-width: 0;
 }
 
 .trans-song {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text);
   white-space: nowrap;
@@ -151,10 +155,9 @@ html, body {
 }
 
 .trans-pos {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
-  margin-top: 1px;
 }
 
 /* === Page Container === */
@@ -181,7 +184,7 @@ html, body {
   align-items: center;
   justify-content: center;
   border-right: 1px solid #222;
-  padding: 4px 2px;
+  padding: 2px;
 }
 
 .knob-label:last-child {
@@ -189,16 +192,16 @@ html, body {
 }
 
 .knob-label-name {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1px;
 }
 
 .knob-label-value {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-dim);
-  margin-bottom: 2px;
+  margin-bottom: 1px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -217,9 +220,11 @@ html, body {
 .home-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 8px;
+  gap: 4px;
+  padding: 4px;
   flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .home-btn {
@@ -228,12 +233,12 @@ html, body {
   align-items: center;
   justify-content: center;
   background: var(--surface);
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid #222;
   cursor: pointer;
   transition: background 0.1s;
-  min-height: 80px;
-  padding: 8px;
+  min-height: 44px;
+  padding: 4px 6px;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -243,28 +248,28 @@ html, body {
 }
 
 .home-btn-label {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
 
 .home-btn-sub {
-  font-size: 10px;
+  font-size: 8px;
   color: var(--text-dim);
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 /* Tap Tempo - spans 2 columns */
 .tap-tempo {
   grid-column: 1 / 3;
-  min-height: 100px;
+  min-height: 52px;
   background: var(--surface);
   border: 1px solid #222;
 }
 
 .tap-tempo .bpm-display {
-  font-size: 48px;
+  font-size: 32px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -272,18 +277,18 @@ html, body {
 }
 
 .tap-tempo .bpm-label {
-  font-size: 11px;
+  font-size: 9px;
   color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
 }
 
 .tap-tempo .pulse-indicator {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: #2ecc71;
-  margin-top: 8px;
+  margin-top: 4px;
   opacity: 0.3;
   transition: none;
 }
