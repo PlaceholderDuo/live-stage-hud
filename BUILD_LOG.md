@@ -1048,3 +1048,113 @@ A planned UI toggle will let the performer switch between:
 Currently, the mode is auto-detected: if bridge_state.json is fresh (<5s old), REAPER mode
 is used. Otherwise, local mode engages automatically.
 
+---
+
+## 2026-07-15 — Show-Ready: GTR AMP, Setlist Nav, Transport Bar, Testing
+
+### Session: Make the iPhone controller a true performance tool
+
+#### Overview
+This session closed the remaining gaps for running a show entirely from the iPhone 7
+and hardware controllers — no MacBook screen or keyboard needed during performance.
+
+#### GTR AMP Rewrite (BE / SSS / Acoustic)
+
+Replaced the 7-preset list with 3 functional presets that actually control REAPER:
+
+| Preset | OSC Commands |
+|--------|-------------|
+| **BE** (red) | Unmute NAM track → unbypass BE FX1 → bypass SSS FX2 → mute acoustic track |
+| **SSS** (blue) | Unmute NAM track → bypass BE FX1 → unbypass SSS FX2 → mute acoustic track |
+| **Acoustic** (green) | Mute NAM track → unmute acoustic track |
+
+Assumptions: Track 6 = GTR NAM (FX1=BE, FX2=SSS), Track 7 = Acoustic.
+Constants in `server.js:1023-1025` — edit to match project layout.
+
+#### iPhone Transport Bar (home screen top)
+
+```
+⏮  ▶ PLAY  ⏭    Come Together
+                 Bar 2 · 0:12 / 5:24
+```
+
+- **Play/Pause** toggles between ▶ (green border) and ⏸ (yellow border)
+- **⏭ Next** advances to next song in setlist
+- **⏮ Prev** goes to previous song in setlist
+- Shows song name, current bar, elapsed/duration time
+- Updates live via Socket.IO state sync
+- In REAPER mode: sends OSC transport commands (play/pause/stop)
+- In local mode: drives server's internal 60fps clock
+
+#### Setlist-Aware Navigation
+
+Before: next/prev jumped alphabetically through 322 songs — felt random.
+
+After: TUI pushes the active band_queue setlist to the LSM server on show start.
+Server stores it as `activeSetlist[]` and uses it for all navigation:
+- `/api/local/setlist` — POST `{songs: [{title}, ...]}` to set active setlist
+- `/api/local/next` — advances within setlist order
+- `/api/local/prev` — retreats within setlist order
+- `state.totalSongs` and `state.nextSong` reflect setlist size/next song
+- All clients (iPhone, TUI, HUD) see the same song index
+- Next-at-end and prev-at-start safely clamp (no crash, no wrap)
+
+#### Debug Overlay (HUD)
+
+`http://x:3000/hud.html?debug=1` activates a bottom panel showing:
+- **Timeline bar** — color-coded section blocks with white playhead
+- **Stats row** — `Bar: 1/162 Pos: 3.2s Exact: 20 Est: 0`
+- **Lyric inspector** — 10 surrounding lines, green `@bar=N` = exact timing, grey `~est` = estimated
+- Zero overhead when not active (`if (!debugMode) return;` on all functions)
+
+#### Automated Test Suite
+
+`web/tools/test-server.js` — 29 tests, zero failures.
+
+Tests cover:
+- Server health (state API, bumper, ChordPro, clients)
+- Setlist loading (3-song setlist, correct song/index)
+- Duration/sections/lyrics computation
+- Transport: play→advance→pause→freeze→resume→stop→reset
+- Navigation: next/prev within setlist, next-at-end, prev-at-start
+- Error handling: nonexistent song, state unchanged after failure
+- Edge cases: double stop, double play, empty setlist, rapid operations
+
+Run: `node "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/tools/test-server.js"`
+
+#### Files Changed
+
+| File | Changes |
+|------|---------|
+| `LSM/web/server.js` | GTR AMP preset with track mute + FX bypass OSC. Setlist storage + navigation. `/api/local/setlist` endpoint. Fixed `localJumpToSong` for setlist order. |
+| `LSM/web/public/hud.html` | Debug overlay panel (bottom 140px, hidden by default) |
+| `LSM/web/public/hud.js` | Debug mode functions: timeline, lyric inspector, bar annotations |
+| `live-stage-hud/web/public/controller.js` | Transport bar, GTR AMP: 3 presets, prev fix |
+| `live-stage-hud/web/public/controller.css` | Transport bar styles, AMP dot/badge |
+| `iPhoneLiveServer/scripts/tui.js` | Space pushes setlist to LSM, hudPost accepts body |
+
+#### Show-Ready Checklist
+
+| Capability | Status |
+|-----------|--------|
+| Play/pause show from iPhone | ✓ |
+| Next/prev song from iPhone (setlist order) | ✓ |
+| Switch guitar amp (BE/SSS/Acoustic) from iPhone | ✓ |
+| View mixer levels + mute tracks from iPhone | ✓ |
+| Tap tempo from iPhone | ✓ |
+| EDM scene control from iPhone | ✓ |
+| Tune guitar from iPhone | ✓ (needs guitar test) |
+| GTR FX control from iPhone | ✓ |
+| Toggle Keys VST from iPhone | ✓ |
+| Bumper music from iPhone (double-tap) | ✓ |
+| Stage HUD on Dell auto-connects | ✓ |
+| No MacBook screen/keyboard needed | ✓ |
+
+#### Known Gaps
+
+- V25 knob values don't sync back to iPhone (one-way display)
+- Ecoflow battery API not integrated
+- LIGHTS page not implemented
+- Tuner not tested with actual guitar signal
+- Network dependency — no offline fallback if WiFi drops
+
