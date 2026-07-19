@@ -240,6 +240,7 @@
         state.position = msg.position;
         state._metronomeRef = null; // reset metronome when live data arrives
       }
+      if (msg.playing !== undefined) state.playing = msg.playing;
       if (msg.currentSong) state.activeSong = msg.currentSong;
       if (msg.activeScene !== undefined) state.activeScene = msg.activeScene;
       if (msg.keysOn !== undefined) {
@@ -869,15 +870,14 @@
           '<button class="setlist-return" id="setlist-return">← Back</button>' +
         '</div>' +
         '<div class="setlist-queue" id="setlist-queue">' +
-          '<div style="text-align:center;color:#666;padding:40px;font-size:14px;">Waiting for song data...</div>' +
+          '<div style="text-align:center;color:#555;padding:40px;font-size:14px;">No setlist loaded. Start the show on TUI.</div>' +
         '</div>';
-
-      document.getElementById('setlist-return').addEventListener('click', function () {
-        navigateTo('home');
-      });
     },
 
     onActivate: function () {
+      document.getElementById('setlist-return').addEventListener('click', function () {
+        navigateTo('home');
+      });
       setKnobLabels({
         1: { name: '--', value: '', color: '#333' },
         2: { name: '--', value: '', color: '#333' },
@@ -887,11 +887,34 @@
     },
 
     onState: function (msg) {
-      if (msg.queue && document.getElementById('setlist-queue')) {
-        renderQueue(msg.queue, msg.songIndex);
-      }
+      renderSetlistFromState(msg);
     },
   });
+
+  function renderSetlistFromState(msg) {
+    var el = document.getElementById('setlist-queue');
+    if (!el) return;
+    var songs = msg.setlist || [];
+    var activeIdx = msg.songIndex ? msg.songIndex - 1 : -1;
+    if (songs.length === 0) {
+      el.innerHTML = '<div style="text-align:center;color:#555;padding:40px;font-size:14px;">No setlist loaded. Start the show on TUI.</div>';
+      return;
+    }
+    var html = '';
+    songs.forEach(function (song, i) {
+      var isActive = i === activeIdx;
+      var isPast = i < activeIdx;
+      html += '<div class="queue-item' + (isActive ? ' active' : '') + (isPast ? ' past' : '') + '">';
+      html += '  <span class="queue-num">' + (i + 1) + '</span>';
+      html += '  <div class="queue-info">';
+      html += '    <span class="song-title">' + (song.title || 'Unknown') + '</span>';
+      html += '    <span class="song-artist">' + (song.artist || '') + '</span>';
+      html += '  </div>';
+      html += '  <span class="queue-status">' + (isActive ? '▶ NOW' : isPast ? '✓' : '') + '</span>';
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  }
 
   function renderQueue(queue, activeIndex) {
     var el = document.getElementById('setlist-queue');

@@ -1337,6 +1337,81 @@ html, body {
   margin-top: 8px;
 }
 
+/* === Setlist Display === */
+.setlist-queue {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: 8px;
+  margin-bottom: 4px;
+  border: 1px solid #222;
+  opacity: 1;
+  transition: opacity 0.3s;
+}
+
+.queue-item.past {
+  opacity: 0.35;
+}
+
+.queue-item.active {
+  border-color: var(--green);
+  background: #0a1a0a;
+}
+
+.queue-num {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-dim);
+  min-width: 20px;
+  text-align: center;
+}
+
+.queue-item.active .queue-num {
+  color: var(--green);
+}
+
+.queue-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.queue-item .song-title {
+  font-size: 13px;
+  font-weight: 600;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-item .song-artist {
+  font-size: 10px;
+  color: var(--text-dim);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-status {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--green);
+  flex-shrink: 0;
+}
+
+.queue-item.past .queue-status {
+  color: var(--text-dim);
+}
+
 /* === Queue Drag Handle === */
 .queue-drag-handle {
   color: #444;
@@ -1353,46 +1428,4 @@ html, body {
   opacity: 0.5;
   border-color: var(--orange);
   box-shadow: 0 0 8px rgba(255,136,0,0.3);
-}
-
-.queue-item {
-  display: flex;
-  align-items: center;
-  padding: 12px;
-  background: var(--surface);
-  border-radius: 8px;
-  margin-bottom: 6px;
-  border: 1px solid #222;
-}
-
-.queue-item.active {
-  border-color: var(--green);
-  background: #0a1a0a;
-}
-
-.queue-item .song-title {
-  font-size: 14px;
-  font-weight: 600;
-  flex: 1;
-}
-
-.queue-item .song-artist {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-right: 12px;
-}
-
-.queue-item .queue-controls {
-  display: flex;
-  gap: 6px;
-}
-
-.queue-item .queue-controls button {
-  padding: 4px 8px;
-  background: #222;
-  border: 1px solid #333;
-  border-radius: 4px;
-  color: var(--text);
-  font-size: 11px;
-  cursor: pointer;
 }
