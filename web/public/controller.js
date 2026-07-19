@@ -869,27 +869,122 @@
           '<h2>Setlist</h2>' +
           '<button class="setlist-return" id="setlist-return">← Back</button>' +
         '</div>' +
-        '<div class="setlist-queue" id="setlist-queue">' +
-          '<div style="text-align:center;color:#555;padding:40px;font-size:14px;">No setlist loaded. Start the show on TUI.</div>' +
-        '</div>';
+        '<div style="display:flex;gap:4px;margin-bottom:6px;">' +
+          '<button class="setlist-tab active" id="tab-queue">Queue</button>' +
+          '<button class="setlist-tab" id="tab-library">Library</button>' +
+        '</div>' +
+        '<input class="setlist-search" id="setlist-search" placeholder="Search 322 songs..." style="display:none;">' +
+        '<div class="setlist-queue" id="setlist-queue"></div>' +
+        '<div class="setlist-library" id="setlist-library" style="display:none;"></div>';
     },
 
     onActivate: function () {
       document.getElementById('setlist-return').addEventListener('click', function () {
         navigateTo('home');
       });
+      document.getElementById('tab-queue').addEventListener('click', function () { showSetlistTab('queue'); });
+      document.getElementById('tab-library').addEventListener('click', function () { showSetlistTab('library'); loadLibrary(); });
+      document.getElementById('setlist-search').addEventListener('input', function () { loadLibrary(this.value); });
+
       setKnobLabels({
         1: { name: '--', value: '', color: '#333' },
         2: { name: '--', value: '', color: '#333' },
         3: { name: '--', value: '', color: '#333' },
         4: { name: '--', value: '', color: '#333' },
       });
+
+      renderSetlistFromState(state);
     },
 
     onState: function (msg) {
       renderSetlistFromState(msg);
     },
   });
+
+  var libraryCache = null;
+
+  function showSetlistTab(tab) {
+    document.getElementById('tab-queue').className = 'setlist-tab' + (tab === 'queue' ? ' active' : '');
+    document.getElementById('tab-library').className = 'setlist-tab' + (tab === 'library' ? ' active' : '');
+    document.getElementById('setlist-queue').style.display = tab === 'queue' ? '' : 'none';
+    document.getElementById('setlist-library').style.display = tab === 'library' ? '' : 'none';
+    document.getElementById('setlist-search').style.display = tab === 'library' ? '' : 'none';
+  }
+
+  function loadLibrary(filter) {
+    var el = document.getElementById('setlist-library');
+    if (!el) return;
+    if (libraryCache) { renderLibrary(el, libraryCache, filter); return; }
+    el.innerHTML = '<div style="text-align:center;color:#555;padding:20px;">Loading...</div>';
+    fetch('/api/library')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { libraryCache = data.songs || []; renderLibrary(el, libraryCache, filter); })
+      .catch(function() { el.innerHTML = '<div style="text-align:center;color:#e74c3c;padding:20px;">Could not load library</div>'; });
+  }
+
+  function renderLibrary(el, songs, filter) {
+    var filtered = songs;
+    if (filter) { var q = filter.toLowerCase(); filtered = songs.filter(function(s) { return (s.title||'').toLowerCase().includes(q) || (s.artist||'').toLowerCase().includes(q); }); }
+    var activeSet = state.setlist || [];
+    var html = '<div style="color:#666;font-size:10px;margin-bottom:4px;">' + filtered.length + ' songs</div>';
+    for (var i = 0; i < Math.min(filtered.length, 100); i++) {
+      var s = filtered[i];
+      var inSetlist = activeSet.some(function(a) { return a.title === s.title; });
+      html += '<div class="lib-song' + (inSetlist?' in-setlist':'') + '" style="display:flex;align-items:center;padding:8px;border-bottom:1px solid #1a1a1a;">';
+      html += '  <div style="flex:1;min-width:0;">';
+      html += '    <div style="font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s.title) + '</div>';
+      html += '    <div style="font-size:9px;color:#666;">' + escapeHtml(s.artist||'') + (s.key?' · '+s.key:'') + (s.bpm?' · '+s.bpm+'bpm':'') + '</div>';
+      html += '  </div>';
+      html += '  <button class="lib-add-btn" data-title="' + escapeHtml(s.title) + '" style="flex-shrink:0;">' + (inSetlist?'✓ Added':'+ Add') + '</button>';
+      html += '</div>';
+    }
+    el.innerHTML = html;
+    el.querySelectorAll('.lib-add-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation(); addSongToSetlist(this.dataset.title, this);
+      });
+    });
+  }
+
+  function addSongToSetlist(title, btn) {
+    fetch('/api/local/setlist/add', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:title}) })
+      .then(function(r) { return r.json(); })
+      .then(function(data) { if (data.ok && btn) { btn.textContent = '✓ Added'; btn.parentElement.classList.add('in-setlist'); loadLibrary(document.getElementById('setlist-search').value); } });
+  }
+
+  function removeSongFromSetlist(title) {
+    fetch('/api/local/setlist/remove', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:title}) })
+      .then(function(r) { return r.json(); })
+      .then(function() { loadLibrary(document.getElementById('setlist-search').value); });
+  }
+
+  function renderSetlistFromState(msg) {
+    var el = document.getElementById('setlist-queue');
+    if (!el) return;
+    var songs = msg.setlist || state.setlist || [];
+    var activeIdx = msg.songIndex ? msg.songIndex - 1 : -1;
+    if (songs.length === 0) {
+      el.innerHTML = '<div style="text-align:center;color:#555;padding:30px;font-size:13px;">No songs in setlist.<br>Tap Library to add songs.</div>';
+      return;
+    }
+    var html = '<div style="color:#666;font-size:10px;margin-bottom:4px;">' + songs.length + ' songs</div>';
+    songs.forEach(function (song, i) {
+      var isActive = i === activeIdx, isPast = i < activeIdx;
+      html += '<div class="queue-item' + (isActive?' active':'') + (isPast?' past':'') + '">';
+      html += '  <span class="queue-num">' + (i+1) + '</span>';
+      html += '  <div class="queue-info">';
+      html += '    <span class="song-title">' + escapeHtml(song.title||'Unknown') + '</span>';
+      html += '    <span class="song-artist">' + escapeHtml(song.artist||'') + '</span>';
+      html += '  </div>';
+      html += '  <span class="queue-status">' + (isActive?'▶ NOW':isPast?'✓':'') + '</span>';
+      html += '  <button class="queue-remove-btn" data-title="' + escapeHtml(song.title||'') + '">✕</button>';
+      html += '</div>';
+    });
+    el.innerHTML = html;
+    el.querySelectorAll('.queue-remove-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) { e.stopPropagation(); removeSongFromSetlist(this.dataset.title); });
+    });
+  }
 
   function renderSetlistFromState(msg) {
     var el = document.getElementById('setlist-queue');
