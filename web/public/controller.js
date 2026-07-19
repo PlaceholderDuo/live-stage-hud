@@ -14,7 +14,7 @@
     keysOn: true,
     activeScene: null,
     activeSong: null,
-    activeAmpPreset: 'OSD',
+    activeAmpPreset: 'BE',
     lyricLines: [],
     settings: loadSettings(),
     lastStateTime: 0,
@@ -436,7 +436,7 @@
 
       // Transport: Prev song
       document.getElementById('btn-prev').addEventListener('click', function () {
-        sendCommand('start_song'); // same as START
+        sendCommand('prev');
       });
 
       updateTransportDisplay();
@@ -1036,27 +1036,23 @@
   // ════════════════════════════════════════════════════════
 
   var gtrAmpPresets = [
-    { name: 'OSD',      cln: false, color: '#ff8800' },
-    { name: 'SSS',      cln: false, color: '#ff8800' },
-    { name: 'SSS CLN',  cln: true,  color: '#3399ff' },
-    { name: 'BE',       cln: false, color: '#ff8800' },
-    { name: 'BE CLN',   cln: true,  color: '#3399ff' },
-    { name: 'TRLX',     cln: false, color: '#ff8800' },
-    { name: 'TWD',      cln: false, color: '#ff8800' },
+    { name: 'BE',       type: 'drive', label: 'DRIVE', color: '#e74c3c' },
+    { name: 'SSS',      type: 'clean', label: 'CLEAN', color: '#3399ff' },
+    { name: 'Acoustic', type: 'acoustic', label: 'ACOUSTIC', color: '#2ecc71' },
   ];
 
   function getAmpColor(presetName) {
     for (var i = 0; i < gtrAmpPresets.length; i++) {
       if (gtrAmpPresets[i].name === presetName) return gtrAmpPresets[i].color;
     }
-    return '#ff8800';
+    return '#e74c3c';
   }
 
   function getAmpBadge(presetName) {
     for (var i = 0; i < gtrAmpPresets.length; i++) {
-      if (gtrAmpPresets[i].name === presetName) return gtrAmpPresets[i].cln ? 'CLEAN' : 'DRIVE';
+      if (gtrAmpPresets[i].name === presetName) return gtrAmpPresets[i].label || '--';
     }
-    return 'DRIVE';
+    return '--';
   }
 
   function updateAmpHomeDisplay(preset) {
@@ -1092,12 +1088,11 @@
 
       gtrAmpPresets.forEach(function (p) {
         var active = p.name === state.activeAmpPreset ? ' active' : '';
-        var badge = p.cln ? 'CLEAN' : 'DRIVE';
         html +=
           '<div class="gtr-amp-preset' + active + '" data-preset="' + p.name + '" style="border-color: ' + p.color + ';">' +
             '<div class="preset-name" style="color: ' + p.color + ';">' + p.name + '</div>' +
-            '<div class="preset-badge" style="color: ' + p.color + ';">' + badge + '</div>' +
-            '<div class="preset-confirm" style="background:' + p.color + ';">✓</div>' +
+            '<div class="preset-badge" style="color: ' + p.color + ';">' + (p.label || '--') + '</div>' +
+            '<div class="preset-confirm" style="background:' + p.color + ';">\u2713</div>' +
           '</div>';
       });
 
