@@ -1,0 +1,118 @@
+═══════════════════════════════════════════════════════════════
+HANDOFF 7: Mobius Looper iPhone Page
+═══════════════════════════════════════════════════════════════
+The server has full Mobius looper MIDI control (CC 20-26 for
+Record/Play/Overdub/Multiply/Mute/Reset/Undo) but the iPhone
+controller has NO dedicated looper page. This handoff builds it.
+
+Files: controller.js, controller.css, index.html
+Zero overlap — new page, new buttons, server routing already exists.
+
+═══════════════════════════════════════════════════════════════
+WHAT EXISTS
+═══════════════════════════════════════════════════════════════
+
+Server already has (server.js):
+  - Virtual MIDI output "Live Show Manager"
+  - CC mapping: Record=20, Play=21, Overdub=22, Multiply=23,
+    Mute=24, Reset=25, Undo=26
+  - Action handlers: mobiusRecord, mobiusPlay, mobiusOverdub,
+    mobiusMultiply, mobiusMute, mobiusReset, mobiusUndo
+  - These send MIDI CC 20-26 on the virtual port
+  - REAPER routes this to the Mobius VST track
+
+iPhone controller has:
+  - sendCommand() function already routes action → WebSocket → server
+  - RegisterPage() pattern for modular pages
+  - No existing Mobius page or buttons
+
+═══════════════════════════════════════════════════════════════
+WHAT TO BUILD
+═══════════════════════════════════════════════════════════════
+
+A) New page: "Looper" accessible from home nav:
+
+  ┌──────────────────────────┐
+  │       LOOPER             │
+  │                         │
+  │  [RECORD]    [PLAY]     │  ← red + green large buttons
+  │  [OVERDUB]   [STOP]     │  ← blue + gray
+  │  [UNDO]      [RESET]    │  ← small secondary buttons
+  │  [MULTIPLY]  [MUTE]     │
+  │                         │
+  │  Track 1: ████░░  Loop  │  ← loop state indicators
+  │  Track 2: ████░░  ODub  │     (only if REAPER sends
+  │  Track 3: ░░░░░░  Stop  │      feedback — initially
+  │  Track 4: ██████  Play  │      show placeholders)
+  └──────────────────────────┘
+
+B) Main buttons (2×4 grid):
+  - RECORD  — red, large, sends "mobiusRecord"
+  - PLAY    — green, large, sends "mobiusPlay"
+  - OVERDUB — blue, large, sends "mobiusOverdub"
+  - STOP/MUTE — gray, large, sends "mobiusMute"
+  - UNDO    — small, amber, sends "mobiusUndo" (with confirm flash)
+  - RESET   — small, red, sends "mobiusReset" (with confirm flash)
+  - MULTIPLY — small, purple, sends "mobiusMultiply"
+
+C) Button behavior:
+  - Press: send action, button highlights briefly (200ms)
+  - Record button stays highlighted red while recording
+  - Play button stays highlighted green while playing
+  - Long-press RESET: double confirm "Reset all loops?" dialog
+
+D) Loop state indicators (4 tracks):
+  - Each track: state label (Empty/Recording/Playing/Overdubbing)
+  - Color-coded: empty=dark gray, recording=red, playing=green,
+    overdubbing=blue, muted=gray
+  - "Track 1" through "Track 4" labels
+  - Data from: state.loopStates (future — Mobius MIDI feedback
+    not yet implemented in Lua runner)
+
+E) Add Looper button to main nav:
+  - Home page: add [LOOPER] button alongside existing nav
+  - Icon: loop symbol or "L" text
+  - The TAB_KNOB_LABELS already has "mobius" entries in server:
+    mobius: ["Record", "Overdub", "Play", "Stop"]
+
+═══════════════════════════════════════════════════════════════
+IMPLEMENTATION
+═══════════════════════════════════════════════════════════════
+
+In controller.js:
+
+  - Register a new page 'looper':
+    registerPage('looper', {
+      title: 'LOOPER',
+      render: renderLooper,
+      onShow: onLooperShow,
+      hide: hideLooper
+    });
+
+  - renderLooper(): build button grid + track indicators
+  - Button handlers: sendCommand('mobiusRecord'), etc.
+  - Navigation: add 'looper' to the page nav array
+
+In controller.css:
+  - .looper-page layout: centered grid
+  - .looper-btn styles: large (60px+), bold, colored
+  - .looper-btn.recording { animation: pulse 0.5s infinite; }
+  - .looper-track styles: compact horizontal indicators
+
+In index.html:
+  - Add looper page div (or generate dynamically in JS)
+
+Server already handles the actions — no server changes needed.
+
+═══════════════════════════════════════════════════════════════
+FUTURE: Mobius Feedback Loop
+═══════════════════════════════════════════════════════════════
+
+Currently the loop state indicators will show placeholders because
+Mobius doesn't send state feedback to the REAPER Lua runner.
+The runner's _collectLoopStates() returns empty.
+
+When this is implemented (handoff 4 or later), the indicators
+will light up automatically — the page structure supports it
+from day one. Just need state.loopStates = [{track:1, state:"playing"},...]
+in the WebSocket broadcast.

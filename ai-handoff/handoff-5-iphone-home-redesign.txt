@@ -1,0 +1,123 @@
+═══════════════════════════════════════════════════════════════
+HANDOFF 5: iPhone Home Page Redesign
+═══════════════════════════════════════════════════════════════
+The iPhone controller's home page shows transport buttons and
+11 knob labels but no at-a-glance performance info. This
+redesign adds section-aware display, sync health, and time
+remaining — everything the performer needs mid-song without
+changing pages.
+
+Files: controller.js, controller.css, index.html
+Zero overlap with other handoffs (touch different sections of
+controller.js than the queue/checklist/settings pages).
+
+═══════════════════════════════════════════════════════════════
+WHAT CHANGES
+═══════════════════════════════════════════════════════════════
+
+Current home page layout:
+  ┌─────────────┐
+  │ [EDM] [TUNER] [GTR FX]   ← nav buttons
+  │ [KEYS] [GTR AMP] [Bumper]│
+  │ SONG: Summer of 69       │
+  │ BPM: 139  BAR: 12        │
+  │ ▶ Playing  -  1:23/3:44  │
+  │ VOX  GTR  BASS  REV MST  │  ← knob labels (all --)
+  │  --    --    --     --   │
+  │ [MUTE] [START] [SETLIST] │
+  └─────────────┘
+
+New home page layout:
+  ┌──────────────────────────┐
+  │ Summer of 69         ● OK│  ← song + sync health dot
+  │ Robert Palmer        D   │  ← artist + key
+  │                         │
+  │ ████████░░░░░░░░  1:23  │  ← section progress bar + remaining
+  │ VERSE 2    → Next: CHORUS│  ← current section + next preview
+  │                         │
+  │  ♩ 139   BAR 12    ▶   │  ← BPM, bar, play state
+  │                         │
+  │ [VOX] [GTR] [BASS] [REV]│  ← knob strip (smaller, cleaner)
+  │                         │
+  │ [EDM] [TUNER] [AMP] [FX]│  ← nav buttons (condensed)
+  └──────────────────────────┘
+
+Key additions:
+
+A) Song header with sync health dot:
+  - Green dot: 100% @time=N, all good
+  - Yellow dot: 80-99% or BPM=120 default
+  - Red dot: <80% or no annotations
+  - Tap dot → shows warning details from lyricSync.warnings[]
+  - Artist + key in smaller text below
+
+B) Section progress bar (new):
+  - Shows progress WITHIN current section, not whole song
+  - Section name: "VERSE 2" in bold
+  - Bar fills as you progress through the section
+  - Time remaining in section (not whole song)
+  - "→ Next: CHORUS" preview (blinks when <4 bars remain)
+  - Data from state.sections[]:
+    Find current section where section.time <= position
+    Section duration = next section.time - current section.time
+    Progress = (position - section.time) / sectionDuration
+
+C) Condensed transport display:
+  - BPM + BAR + play state on one line
+  - Smaller than current — frees space for section info
+  - Play state icon: ▶ (playing), ⏸ (paused), ■ (stopped)
+
+D) Cleaner knob strip:
+  - Keep 4 knob labels (VOX, GTR, BASS, REV)
+  - Remove "--" if values aren't available (was always --)
+  - Show real values when they arrive from REAPER feedback:
+    e.g. "VOX -3.2dB" instead of "VOX --"
+
+E) Existing buttons preserved:
+  - EDM, TUNER, GTR AMP, GTR FX, KEYS — same behavior
+  - MUTE panic button — same behavior
+  - START (next song) — same behavior
+  - SETLIST — opens queue page
+
+F) Design constraints:
+  - iPhone 7 landscape (667×375px viewport)
+  - White text on #000/#111 background (stage wash)
+  - Touch targets ≥ 44px
+  - No scrolling — fixed layout
+  - Large fonts for glanceable info (section name ≥ 24px)
+
+═══════════════════════════════════════════════════════════════
+IMPLEMENTATION
+═══════════════════════════════════════════════════════════════
+
+In controller.js:
+
+  - Find the home page render function (renderHome or similar)
+  - Add section progress bar HTML + update logic
+  - The page already receives WebSocket state updates
+  - Add a new updateSectionDisplay(state) function called
+    from the existing state handler
+  - Parse sections[] from state for current/next section
+  - Sync health dot: check state.lyricSync (already in broadcast)
+
+In controller.css:
+  - Add .section-display styles (progress bar, text, colors)
+  - Add .sync-dot styles (8px colored circle)
+  - Adjust existing layout to make room for section bar
+  - Keep all existing button styles — just reposition
+
+In index.html:
+  - Add section-display div to home page
+  - Add sync-dot span next to song title
+  - Minimal HTML changes — mostly JS + CSS
+
+═══════════════════════════════════════════════════════════════
+TESTING
+═══════════════════════════════════════════════════════════════
+
+  - Start the show server
+  - Open iPhone controller on any device
+  - Load a song → verify section bar shows current section
+  - Change sections → verify section name updates
+  - Verify sync dot color changes for different songs
+  - Verify touch targets still work (all buttons tappable)

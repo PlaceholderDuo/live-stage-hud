@@ -1,0 +1,264 @@
+═══════════════════════════════════════════════════════════════
+HANDOFF 4: Deep Integration + Library Cleanup + Polish
+═══════════════════════════════════════════════════════════════
+System-level improvements across the Lua runner, server, song
+library, and iPhone controller. ZERO overlap with handoffs 2
+(TUI/iPhone controller) and 3 (HUD visuals). Touches REAPER Lua
+runner, LSM server.js, song files, and iPhone controller.
+═══════════════════════════════════════════════════════════════
+WHAT THIS DOES
+═══════════════════════════════════════════════════════════════
+
+Three major improvements that make the system more reliable and
+easier to use:
+
+  1) Push-mode lyric selection from REAPER Lua runner
+     → Runner sends currentLine + currentSection in every
+       bridge_state.json update. Server broadcasts it. HUD
+       shows it. Eliminates client-side estimation entirely.
+
+  2) Song library cleanup + deduplication
+     → 61 zero-timing songs are mostly duplicates (OFFICIAL...
+       TABS, CHORDS ver N). Merge best versions, delete junk.
+
+  3) Setlist persistence + pre-show checklist
+     → Setlists save automatically. Restore on server start.
+
+═══════════════════════════════════════════════════════════════
+PRIORITY 1: Push-Mode Lyric Selection in Lua Runner
+═══════════════════════════════════════════════════════════════
+
+Current: The HUD client parses the chopro file, finds current
+line by comparing _time against position. This means:
+- Every HUD client re-parses the chopro independently
+- If a client reconnects mid-song, it re-fetches and re-parses
+- Zero verification that the line shown is correct
+
+Target: The REAPER Lua runner (60fps) pre-parses the chopro at
+song load, does a binary search for current line on each frame,
+and publishes `currentLine` + `currentSection` + `totalLines`
+in bridge_state.json. The HUD uses these directly.
+
+Files to change:
+  A) runner/runner.lua (~/Library/App Support/REAPER/Scripts/
+     Live Show Manager/runner/runner.lua, 320 lines)
+  B) runner/bridge.lua (88 lines)
+  C) web/server.js — read + broadcast new fields
+  D) hud.js — prefer currentLine/section from state over parsing
+
+Step-by-step for the runner:
+
+A.1) Add a chopro parser to runner.lua:
+  - On song change (region change or first tick), load the
+    song.chopro file via io.open()
+  - Parse @time=N annotations into a sorted table:
+    lyricLines = { {time=3.52, text="...", bar=19}, ... }
+  - Store as a global or module variable
+
+A.2) Per-frame lookup (every ~16ms):
+  - Get current position from REAPER (already done)
+  - Binary search lyricLines for the line where time <= position
+  - Set currentLineIdx = index of that line
+  - Find currentSection from Show.lookupBySection or from
+    section boundaries in the region table
+
+A.3) Publish via bridge.lua:
+  - Add to the bridge_state.json payload:
+    { currentLineIdx, totalLines, currentSectionIdx, currentSectionName }
+
+B) Bridge.lua changes:
+  - Add currentLineIdx, totalLines, currentSectionIdx,
+    currentSectionName to the published table
+
+C) Server.js changes:
+  - In poll loop, read new fields from bridge_state.json:
+    state.currentLineIdx = luaState.currentLineIdx
+    state.currentSectionIdx = luaState.currentSectionIdx
+    state.currentSectionName = luaState.currentSectionName
+  - These get automatically broadcast via broadcastState()
+
+D) HUD changes:
+  - In socket.on("state"), if s.currentLineIdx is present:
+    lyricEngine._currentLineIdx = s.currentLineIdx
+    Use it directly in renderRollingEngine instead of
+    recomputing from _time lookup
+  - Fallback to current time-based lookup if currentLineIdx
+    is not present (backward compat)
+  - Log the index source for debugging:
+    _d.textContent += " src=" + (s.currentLineIdx ? "lua" : "client")
+
+E) Optional: HUD accepts the line index as authoritative:
+  - renderRollingEngine receives currentLineIdx directly
+  - Draws the 6-line window centered on that index
+  - No time comparison needed — the Lua runner already did it
+
+═══════════════════════════════════════════════════════════════
+PRIORITY 2: Song Library Cleanup
+═══════════════════════════════════════════════════════════════
+
+Current state (verify-lyric-sync.js):
+  - 258 songs with @time=N annotations
+  - 61 songs with ZERO annotations
+  - The 61 are mostly: OFFICIAL ... TABS duplicates,
+    CHORDS (ver N) variants, slug-named GP imports
+
+Cleanup steps:
+
+A) Identify duplicates — the verify script already reports
+   "No timing" songs. Many are duplicates where the clean
+   version (e.g., "Aint No Sunshine") already has @time=N,
+   and the "OFFICIAL AINT NO SUNSHINE TABS" variant doesn't.
+
+B) Merge before deleting:
+  - For each pair (e.g., "Aint No Sunshine" vs "OFFICIAL
+    AINT NO SUNSHINE TABS"), compare chopro quality:
+    * Which has more lyric lines?
+    * Which has chord annotations ([] brackets)?
+    * Which has real BPM (not 120)?
+  - Keep the best, delete the duplicate
+  - If both have useful info, merge: copy chords from one
+    into the other's chopro, then delete the inferior
+
+C) Handle slug-named songs:
+  - Songs like "cant_you_see", "highway_to_hell", "limelight",
+    "papa_was_a_rollin_stone", "whole_lotta_rosie" have very
+    few annotated lines (1-7). These were likely GP imports
+    that only got partial annotations.
+  - Check if a clean-named version exists (e.g., "Can't You See")
+  - If not, rename the folder to a clean title
+  - If lyrics are sparse, flag for later lrc-to-bars processing
+
+D) Standardize folder names:
+  - Strip "OFFICIAL", "TABS", "CHORDS (ver N)" from folder names
+  - Standardize to: "<Song Title>" without version suffixes
+  - Update meta.json title field to match folder name
+
+E) Final state target:
+  - 0 songs with "OFFICIAL" or "TABS" or "CHORDS (ver" in name
+  - Every song has either @time=N annotations or is flagged
+    as "needs LRCLIB" in a small list
+  - No duplicate songs (verified by title + artist similarity)
+
+═══════════════════════════════════════════════════════════════
+PRIORITY 3: Setlist Persistence
+═══════════════════════════════════════════════════════════════
+
+Current: Active setlist lives in server.js `activeSetlist` array.
+Lost on server restart. Setlist files exist in data/setlists/
+but aren't loaded automatically.
+
+Changes:
+
+A) Auto-save on every modification:
+  - In LSM server.js, after any setlist change (add/remove/
+    reorder/jump), write activeSetlist to:
+    data/setlists/_last_session.json
+  - On server start, load _last_session.json as the active
+    setlist if it exists
+
+B) Named setlist save/load:
+  - Already partially working via setlists.js API on :3300
+  - Add save/load to the TUI (Export/Import keys already exist)
+  - Add save/load to the iPhone controller queue page
+
+C) Setlist validation on load:
+  - When loading a setlist, check each song exists in library
+  - Show warnings for songs not found
+  - Show sync health summary per setlist (aggregate score
+    from verify-lyric-sync.js)
+
+═══════════════════════════════════════════════════════════════
+PRIORITY 4: Pre-Show Checklist (iPhone Page)
+═══════════════════════════════════════════════════════════════
+
+Add a "Checklist" page to the iPhone controller that runs
+before showtime. The page:
+
+A) Checks server health:
+  - LSM :3000 reachable?
+  - iPhoneLiveServer :3300 reachable?
+  - REAPER connected? (bridge_state.json age < 5s)
+  - MIDI virtual port "Live Show Manager" exists?
+
+B) Checks setlist sync health:
+  - Runs verify-lyric-sync.js --json for songs in active setlist
+    (via child_process.exec on the server, exposed as
+     /api/preflight endpoint)
+  - Shows per-song results: green dot (100% @time), yellow
+    (80-99%), red (<80%)
+  - Aggregate score: "8/10 songs ready"
+
+C) Checks network:
+  - WiFi connected?
+  - Bonjour hostname resolves?
+  - Dell reachable at 192.168.0.127?
+  - Cloudflare Tunnel URL (if running)?
+
+D) Result display:
+  - Green banner: "ALL SYSTEMS GO — 10/10"
+  - Yellow banner: "⚠ 2 ISSUES — proceed with caution"
+  - Red banner: "✗ 4 ISSUES — fix before showtime"
+  - Each issue tappable for details
+
+═══════════════════════════════════════════════════════════════
+PRIORITY 5: Guest Singer Page Redesign
+═══════════════════════════════════════════════════════════════
+
+Current: Guest singers connect via QR → dumped on HUD or
+connect page. No controls, no context.
+
+New page at /singer (already exists on :3300 but basic):
+
+A) Clean landing page:
+  - Large text: current song title + artist
+  - Current lyric line (big, centered)
+  - "You're up next!" or "Waiting..." indicator based on
+    their position in queue
+  - Subtle: "Band requests welcome" with song search
+  - No transport controls (band controls playback)
+
+B) Remove jsonblob.com dependency:
+  - Singer queue is ALREADY local on :3300
+  - The external sync fallback polled jsonblob — remove it
+    or make it opt-in
+  - All singer submissions go directly to the local server
+
+═══════════════════════════════════════════════════════════════
+FILES TOUCHED (ZERO OVERLAP WITH HANDOFFS 2 & 3)
+═══════════════════════════════════════════════════════════════
+
+  runner/runner.lua            ← Add chopro parser + line lookup
+  runner/bridge.lua            ← Add currentLineIdx to payload
+  web/server.js                 ← Read + broadcast new fields
+  web/public/hud.js             ← Prefer currentLineIdx from state
+  web/tools/dedupe-songs.js    ← NEW: song library dedup script
+  web/public/controller.js     ← Checklist page + setlist save/load
+  web/public/controller.css    ← Checklist page styles
+  web/public/index.html        ← Checklist page HTML
+  data/setlists/_last_session.json  ← Auto-saved on every change
+  server/api/queue.js           ← Remove jsonblob dependency
+  server/public/singer.html     ← Redesigned singer landing page
+
+═══════════════════════════════════════════════════════════════
+BUILD ORDER (within this handoff)
+═══════════════════════════════════════════════════════════════
+
+  1) Song library cleanup (independent, can run immediately)
+     → Write + run dedupe-songs.js
+     → Verify: re-run verify-lyric-sync.js
+
+  2) Setlist persistence (server.js only)
+     → Auto-save on changes + load on start
+     → Test: restart server, setlist survived
+
+  3) Push-mode lyric selection (runner + bridge + server + HUD)
+     → Most impactful but touches most files
+     → Test: start song, verify HUD debug shows "src=lua"
+
+  4) Pre-show checklist page (iPhone controller)
+     → New page with health checks
+     → Test: navigate to Checklist, see green/yellow/red
+
+  5) Singer page redesign (iPhoneLiveServer)
+     → Clean landing page, remove jsonblob
+     → Test: open /singer on phone, verify clean display

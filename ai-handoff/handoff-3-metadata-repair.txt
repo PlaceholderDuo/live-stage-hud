@@ -1,0 +1,208 @@
+═══════════════════════════════════════════════════════════════
+HANDOFF 3: Song Metadata Repair (BPM + Key + Naming)
+═══════════════════════════════════════════════════════════════
+Context: 258 songs have @time=N but ~240 of them are wrong
+because @time was computed from @bar using BPM=120 (default
+placeholder). The HUD will show lyrics at wrong times until
+the BPM field in meta.json is corrected to the actual tempo.
+
+This handoff fixes BPMs, standardizes keys, and cleans up
+song names. All work touches ONLY meta.json files in
+~/ReaperSongs/. Zero overlap with any other handoff.
+
+═══════════════════════════════════════════════════════════════
+THE PROBLEM
+═══════════════════════════════════════════════════════════════
+
+The verify script reports BPM=120 for ~300 of 324 songs.
+That's the default — not the real tempo. When we migrated
+@bar→@time, we used this wrong BPM:
+
+  time = (bar - 1) * 4 * 60 / 120   ← wrong if song is 94 BPM
+
+At 94 BPM vs 120 BPM, a song drifts 28% by the end:
+  - Verse 1 starts at bar 19 → @time=36.0s (should be 46.1s)
+  - Chorus at bar 45 → @time=88.0s (should be 112.3s)
+  - The HUD shows lyrics 10-24 seconds EARLY for a typical song
+
+After we fix BPMs, we re-run migrate-to-atime.js (already built)
+to recompute @time with correct values. The result: accurate
+time-based lookup for 258 songs without needing LRCLIB at all.
+
+═══════════════════════════════════════════════════════════════
+TASK 1: Build BPM Lookup Script
+═══════════════════════════════════════════════════════════════
+
+Create tools/fix-metadata.js that reads every meta.json,
+looks up the real BPM, and writes it back. Two strategies:
+
+Strategy A — Spotify API (preferred, accurate):
+  - Search: artist + title → get track → audio_features endpoint
+  - Returns: tempo (BPM), key, mode, time_signature, energy, etc.
+  - Rate limit: ~180 requests/min with app credentials
+  - No user login needed — client credentials flow
+  - Registration: developer.spotify.com → create app → get
+    client_id + client_secret
+  - Store credentials in data/spotify-credentials.json (gitignored)
+
+Strategy B — Local audio analysis (fallback, no API needed):
+  - Check ~/ReaperSongs/<Song>/ for .wav/.mp3/.flac files
+  - Use lib bpm-detective or web-audio-api
+  - Accurate if backing track audio exists in song folder
+  - Requires: npm install bpm-detective
+
+Implementation:
+  - Try Spotify first (fast, accurate)
+  - Fall back to local audio if no Spotify match
+  - Fall back to manual flag: mark song as "needs BPM"
+
+For each song, update meta.json:
+  {
+    "bpm": 94,              ← was 120, now real
+    "key": "Am",            ← kept if already set, filled from Spotify
+    "bpm_source": "spotify"  ← new field — tracks provenance
+  }
+
+═══════════════════════════════════════════════════════════════
+TASK 2: Re-run @time Migration with Correct BPMs
+═══════════════════════════════════════════════════════════════
+
+After Task 1 fixes BPMs, the @time values in song.chopro are
+still computed from the OLD BPM=120. Re-run the migration:
+
+  node tools/migrate-to-atime.js
+
+This reads the NOW-CORRECT bpm from meta.json and recomputes:
+  time = (bar - 1) * 4 * 60 / correct_bpm
+
+The script already exists and handles this. It only overwrites
+lines that already have @time= prefix. Safe to re-run.
+
+═══════════════════════════════════════════════════════════════
+TASK 3: Standardize Song Names
+═══════════════════════════════════════════════════════════════
+
+Songs with bad names:
+  - "OFFICIAL AINT NO SUNSHINE TABS" → rename to "Aint No Sunshine"
+  - "AMERICAN GIRL CHORDS (ver 2)" → delete (duplicate of "American Girl")
+  - "cant_you_see" → rename to "Can't You See"
+  - "highway_to_hell" → rename to "Highway to Hell"
+  - "limelight" → rename to "Limelight"
+  - "papa_was_a_rollin_stone" → rename to "Papa Was a Rollin' Stone"
+  - "whole_lotta_rosie" → rename to "Whole Lotta Rosie"
+  - "beds_are_burning" → rename to "Beds Are Burning"
+  - "dont_stop_believin" → rename to "Don't Stop Believin'"
+  - "cold_as_ice" → rename to "Cold as Ice"
+  - "long_as_i_can_see_the_light" → rename to "Long as I Can See the Light"
+  - "old_time_rock_and_roll" → rename to "Old Time Rock and Roll"
+  - "proud_mary" → rename to "Proud Mary"
+  - "sweet_home_chicago" → rename to "Sweet Home Chicago"
+  - "aint_no_sunshine" → check if "Aint No Sunshine" exists; if so delete this
+
+Steps:
+  A) Detect slug-named folders (all lowercase with underscores,
+     no spaces, no capital letters after first char)
+  B) Convert to Title Case: split on _, capitalize each word,
+     handle contractions (Dont → Don't, Cant → Can't)
+  C) Rename folder: fs.renameSync(oldPath, newPath)
+  D) Update meta.json: "title" field to match new folder name
+  E) Safe — check if destination already exists first
+
+Build as tools/rename-songs.js with --dry-run mode.
+
+═══════════════════════════════════════════════════════════════
+TASK 4: Deduplicate Song Variants
+═══════════════════════════════════════════════════════════════
+
+Many songs exist in duplicate:
+  "Aint No Sunshine" vs "OFFICIAL AINT NO SUNSHINE TABS"
+  "American Girl" vs "AMERICAN GIRL CHORDS (ver 2)"
+  "Fins" vs "FINS CHORDS (ver 2)" vs "Fins Chords"
+  etc.
+
+Build tools/dedupe-songs.js that:
+
+A) Groups songs by normalized title + artist:
+  - Normalize: lowercase, strip OFFICIAL/TABS/CHORDS/verN
+  - Group songs with matching normalized names
+
+B) For each group with >1 song:
+  - Score each variant:
+    +1 per @time=N annotation
+    +1 per chord bracket [A] [G] etc
+    +1 if BPM != 120 (real BPM vs default)
+    +1 if key is set (not empty)
+    +1 if lyrics.length > 20 lines
+  - Keep the highest-scoring variant
+  - Move others to ~/ReaperSongs/_duplicates/ (archive, not delete)
+
+C) After dedup, update meta.json of kept songs:
+  - Take the best BPM, key, tuning, capo from any variant
+  - Merge lyric sections if one variant has better section data
+  - Add a "deduplicated_from" field listing merged sources
+
+D) Run with --dry-run first to preview:
+  node tools/dedupe-songs.js --dry-run
+  node tools/dedupe-songs.js   (for real)
+
+═══════════════════════════════════════════════════════════════
+TASK 5: Key Completion
+═══════════════════════════════════════════════════════════════
+
+Many meta.json files have "key": "" (empty). Fill these in.
+
+Sources (in priority order):
+  1) Spotify API — already in our data from Task 1
+  2) From song.chopro: parse {key: Am} directive
+  3) From the key-fallback.json already in data/ (76 entries)
+  4) Detect from chords: count chord frequencies, find the
+     most common root note — that's likely the key
+
+Build into fix-metadata.js as a sub-task. Add "key_source"
+field: "spotify" / "chopro" / "fallback" / "detected".
+
+═══════════════════════════════════════════════════════════════
+TASK 6: Verify + Validate
+═══════════════════════════════════════════════════════════════
+
+After Tasks 1-5, run:
+  node tools/verify-lyric-sync.js
+
+Target state:
+  - BPM warnings reduced from ~300 to <50
+  - 0 songs with "OFFICIAL" or "TABS" or "ver N" in folder name
+  - 0 songs with all-lowercase-underscore names
+  - key field filled for 90%+ of songs
+  - ~324 songs (dedup complete, duplicates in _duplicates/)
+
+Then re-run:
+  node tools/migrate-to-atime.js   (recompute @time with real BPMs)
+  node tools/verify-lyric-sync.js  (verify final state)
+
+═══════════════════════════════════════════════════════════════
+FILES (all independent of other handoffs)
+═══════════════════════════════════════════════════════════════
+
+  tools/fix-metadata.js          ← NEW: BPM + key lookup + fix
+  tools/rename-songs.js           ← NEW: folder name standardization
+  tools/dedupe-songs.js           ← NEW: variant deduplication
+  tools/migrate-to-atime.js       ← EXISTING: re-run after BPM fix
+  tools/verify-lyric-sync.js      ← EXISTING: validate results
+  data/spotify-credentials.json   ← NEW: gitignored API creds
+  data/key-fallback.json          ← EXISTING: already has 76 entries
+  ~/ReaperSongs/*/meta.json       ← WRITE: updated BPM/key/name
+  ~/ReaperSongs/_duplicates/      ← NEW: archive for removed dupes
+
+═══════════════════════════════════════════════════════════════
+BUILD ORDER
+═══════════════════════════════════════════════════════════════
+
+  1) fix-metadata.js — Spotify BPM + key lookup (--dry-run first)
+  2) rename-songs.js — standardize folder names (--dry-run first)
+  3) dedupe-songs.js — merge duplicates (--dry-run first)
+  4) Key completion pass in fix-metadata.js
+  5) Re-run migrate-to-atime.js with corrected BPMs
+  6) Re-run verify-lyric-sync.js — confirm massive improvement
+
+All scripts should have --dry-run mode. Nothing is destructive
+until dry-run is removed.

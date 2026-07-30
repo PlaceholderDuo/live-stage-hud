@@ -21,8 +21,14 @@
   var metronomeDot = $("metronomeDot");
   var statusText = $("statusText");
 
-  var currentSectionLabel = $("currentSectionLabel");
-  var futureSectionLabel = $("futureSectionLabel");
+  var sectionLabel = $("sectionLabel");
+  var ringProgress = document.querySelector(".ring-progress");
+  var ringTicks = $("ringTicks");
+  var ringTimeEl = document.querySelector(".ring-time");
+  var ringTotalEl = document.querySelector(".ring-total");
+  var songTransition = $("songTransition");
+  var stTitle = $("stTitle");
+  var stMeta = $("stMeta");
 
   // 6-line rolling engine DOM elements
   var linePast3 = $("linePast3");
@@ -39,7 +45,6 @@
   var soloProgressFill = $("soloProgressFill");
 
   var timelineNotches = $("timelineNotches");
-  var progressFill = $("progressFill");
 
   var footerElapsed = $("footerElapsed");
   var footerTotal = $("footerTotal");
@@ -65,14 +70,22 @@
   var loadingEl = null;
   var syncWarningEl = null;
 
+  // Feature 4 & 5: First-song safety, song transition
+  var isFirstSong = true;
+  var firstSongTimeout = null;
+  var songTransitionTimeout = null;
+  var lastSongId = null;
+
   // ═══════════════════════════════════════════════════════════
   // FIT HUD — Scale everything to fit the browser window
   // ═══════════════════════════════════════════════════════════
 
   function fitHud() {
     var winH = window.innerHeight;
-    // Design target: 1080px viewport → scale 1.0
-    var scale = Math.min(1, Math.max(0.35, winH / 1080));
+    var winW = window.innerWidth;
+    var scaleH = Math.min(1, Math.max(0.45, winH / 1080));
+    var scaleW = Math.min(1, winW / 900);
+    var scale = Math.min(scaleH, scaleW);
     document.documentElement.style.setProperty('--hud-scale', scale);
   }
 
@@ -167,69 +180,102 @@
     var lines = [];
     var directives = {};
     var rawLines = text.split("\n");
-    
+
     var currentType = "verse";
     var currentLabel = "";
     var currentDuration = null;
+    var isNewFormat = false;
 
     for (var i = 0; i < rawLines.length; i++) {
       var raw = rawLines[i].trim();
       if (!raw) continue;
-      
-      if (raw.charAt(0) === "{") {
-        var match = raw.match(/^\{([^:]+):\s*(.+)\}$/);
-        var directiveName = "";
-        var directiveVal = "";
-        if (match) {
-          directiveName = match[1].trim().toLowerCase();
-          directiveVal = match[2].trim();
-          directives[directiveName] = directiveVal;
-        } else {
-          directiveName = raw.substring(1, raw.length - 1).trim().toLowerCase();
-        }
 
+      // ── New format section header: ## Name @time ──
+      if (raw.substring(0, 2) === "##") {
+        isNewFormat = true;
+        var rest = raw.substring(2).trim();
+        var label = rest;
+        var atIdx = rest.lastIndexOf("@");
+        if (atIdx >= 0) {
+          label = rest.substring(0, atIdx).trim();
+        }
         currentDuration = null;
-        if (directiveVal) {
-          var durMatch = directiveVal.match(/@duration\s*=\s*(\d+)/i);
-          if (durMatch) currentDuration = parseInt(durMatch[1], 10);
-        }
-
-        if (directiveName.indexOf("start_of_chorus") >= 0) {
-          currentType = "chorus";
-          currentLabel = (directiveVal || "Chorus").replace(/@\w+\s*=\s*\S+/g, "").trim();
-        } else if (directiveName.indexOf("start_of_verse") >= 0) {
-          currentType = "verse";
-          currentLabel = (directiveVal || "Verse").replace(/@\w+\s*=\s*\S+/g, "").trim();
-        } else if (directiveName.indexOf("start_of_solo") >= 0) {
-          currentType = "solo";
-          currentLabel = (directiveVal || "Solo").replace(/@\w+\s*=\s*\S+/g, "").trim();
-        } else if (directiveName.indexOf("start_of_bridge") >= 0) {
-          currentType = "bridge";
-          currentLabel = (directiveVal || "Bridge").replace(/@\w+\s*=\s*\S+/g, "").trim();
-        } else if (directiveName.indexOf("end_of_") >= 0) {
-          currentType = "verse";
-          currentLabel = "";
-          currentDuration = null;
-        }
+        var lc = label.toLowerCase();
+        if (lc.indexOf("chorus") >= 0) currentType = "chorus";
+        else if (lc.indexOf("verse") >= 0) currentType = "verse";
+        else if (lc.indexOf("solo") >= 0) currentType = "solo";
+        else if (lc.indexOf("bridge") >= 0) currentType = "bridge";
+        else if (lc.indexOf("intro") >= 0) currentType = "intro";
+        else if (lc.indexOf("outro") >= 0 || lc.indexOf("ending") >= 0) currentType = "outro";
+        else if (lc.indexOf("interlude") >= 0) currentType = "interlude";
+        else currentType = label ? currentType : "verse";
+        currentLabel = label || currentLabel;
         continue;
       }
 
-      var barAnnot = null;
+      // ── Metadata directive: {title: ...} or old-style {start_of_*} ──
+      if (raw.charAt(0) === "{" && raw.indexOf("}") >= 0) {
+        var dm = raw.match(/^\{([^:]+):\s*(.+)\}$/);
+        var dname = "", dval = "";
+        if (dm) { dname = dm[1].trim().toLowerCase(); dval = dm[2].trim(); }
+        else { dname = raw.substring(1, raw.length - 1).trim().toLowerCase(); }
+
+        // Old format: {start_of_chorus: Chorus 1}
+        if (dname.indexOf("start_of_") >= 0) {
+          isNewFormat = false;
+          var tp = dname.replace("start_of_", "").replace(/\s+/g, "_");
+          if (tp.indexOf("chorus") >= 0) currentType = "chorus";
+          else if (tp.indexOf("verse") >= 0) currentType = "verse";
+          else if (tp.indexOf("solo") >= 0) currentType = "solo";
+          else if (tp.indexOf("bridge") >= 0) currentType = "bridge";
+          else if (tp.indexOf("intro") >= 0) currentType = "intro";
+          else currentType = "verse";
+          currentLabel = (dval || "").replace(/@\w+\s*=\s*\S+/g, "").trim();
+          currentDuration = null;
+          var durMatch = dval.match(/@duration\s*=\s*(\d+)/i);
+          if (durMatch) currentDuration = parseInt(durMatch[1], 10);
+          continue;
+        }
+
+        if (dname.indexOf("end_of_") >= 0) {
+          currentType = "verse";
+          currentLabel = "";
+          currentDuration = null;
+          continue;
+        }
+
+        directives[dname] = dval;
+        continue;
+      }
+
+      // ── Content line ──
       var timeAnnot = null;
       var content = raw;
 
-      // Extract @time=N (preferred — sub-second precision, no BPM dependency)
-      var timeMatch = raw.match(/@time\s*=\s*([\d]+\.?\d*)\s*/i);
-      if (timeMatch) {
-        timeAnnot = parseFloat(timeMatch[1]);
-        content = raw.replace(/@time\s*=\s*[\d]+\.?\d*\s*/i, "");
-      }
-
-      // Extract @bar=N (legacy fallback — requires BPM for conversion)
-      var barMatch = raw.match(/@bar\s*=\s*(\d+)\s*/i);
-      if (barMatch) {
-        barAnnot = parseInt(barMatch[1], 10);
-        content = raw.replace(/@bar\s*=\s*\d+\s*/i, "");
+      if (isNewFormat) {
+        var atIdx = content.lastIndexOf("@");
+        if (atIdx >= 0) {
+          var tn = parseFloat(content.substring(atIdx + 1).trim());
+          if (!isNaN(tn)) { timeAnnot = tn; content = content.substring(0, atIdx).trim(); }
+        }
+        // Fallback: old @time=N prefix still present on some lines in migrated files
+        if (timeAnnot === null) {
+          var tmFallback = content.match(/@time\s*=\s*([\d]+\.?\d*)\s*/i);
+          if (tmFallback) timeAnnot = parseFloat(tmFallback[1]);
+        }
+        content = content.replace(/@time\s*=\s*[\d]+\.?\d*\s*/gi, "")
+                         .replace(/@bar\s*=\s*\d+\s*/gi, "")
+                         .trim();
+        // Unwrap bare chord markers: /C G Am/
+        if (content.charAt(0) === "/" && content.lastIndexOf("/") > 0) {
+          content = content.substring(1, content.lastIndexOf("/")).trim();
+        }
+      } else {
+        content = raw.replace(/@time\s*=\s*[\d]+\.?\d*\s*/gi, "")
+                     .replace(/@bar\s*=\s*\d+\s*/gi, "")
+                     .replace(/\s+/g, " ").trim();
+        var tm = raw.match(/@time\s*=\s*([\d]+\.?\d*)\s*/i);
+        if (tm) timeAnnot = parseFloat(tm[1]);
       }
 
       lines.push({
@@ -237,7 +283,7 @@
         type: currentType,
         label: currentLabel,
         _time: timeAnnot,
-        _bar: barAnnot,
+        _bar: null,
         _duration: currentDuration,
       });
     }
@@ -426,6 +472,27 @@
   }
 
   // ═══════════════════════════════════════════════════════════
+  // FEATURE 2: 12-Color Chord Coloring (Circle of Fifths)
+  // ═══════════════════════════════════════════════════════════
+
+  function getChordRootColor(chord) {
+    if (!chord) return null;
+    var root = chord.match(/^[A-G][b#]?/);
+    if (!root) return null;
+    root = root[0];
+    var map = {
+      'C': '#ff3333', 'C#': '#ff6b35', 'Db': '#ff6b35',
+      'D': '#ff8800', 'D#': '#ffaa00', 'Eb': '#ffaa00',
+      'E': '#ffdd00',
+      'F': '#33cc66', 'F#': '#1abc9c', 'Gb': '#1abc9c',
+      'G': '#3399ff', 'G#': '#5b6abf', 'Ab': '#5b6abf',
+      'A': '#9933ff', 'A#': '#cc33ff', 'Bb': '#cc33ff',
+      'B': '#ff3399'
+    };
+    return map[root] || null;
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // CHORD-WORD PAIR HTML BUILDER
   // ═══════════════════════════════════════════════════════════
 
@@ -440,7 +507,11 @@
 
       var chordEl = document.createElement("span");
       chordEl.className = pair.chord ? "chord" : "chord empty";
-      chordEl.textContent = pair.chord ? "[" + pair.chord + "]" : "\u00A0"; // brackets around chords!
+      chordEl.textContent = pair.chord ? "[" + pair.chord + "]" : "\u00A0";
+      if (pair.chord) {
+        var c = getChordRootColor(pair.chord);
+        if (c) chordEl.style.color = c;
+      }
       pairEl.appendChild(chordEl);
 
       var wordEl = document.createElement("span");
@@ -628,33 +699,6 @@
         el.innerHTML = "\u2026";
       }
     }
-
-    // Update section labels (e.g. [CHORUS])
-    if (sections && sections.length > 0) {
-      var secIdx = -1;
-      for (var j = sections.length - 1; j >= 0; j--) {
-        if (bar >= sections[j].bar) { secIdx = j; break; }
-      }
-      if (secIdx >= 0) {
-        currentSectionLabel.textContent = "[" + cleanLabel(sections[secIdx].text).toUpperCase() + "]";
-        
-        // Next section preview
-        if (secIdx + 1 < sections.length) {
-          var nextSec = sections[secIdx + 1];
-          var nextNextBar = (secIdx + 2 < sections.length) ? sections[secIdx + 2].bar : "End";
-          var lengthStr = "";
-          if (typeof nextNextBar === "number") {
-            lengthStr = " - " + (nextNextBar - nextSec.bar) + " Bars";
-          }
-          futureSectionLabel.textContent = "[Next: " + cleanLabel(nextSec.text) + lengthStr + "]";
-        } else {
-          futureSectionLabel.textContent = "";
-        }
-      } else {
-        currentSectionLabel.textContent = "";
-        futureSectionLabel.textContent = "";
-      }
-    }
   }
 
   function renderSoloGrid(line) {
@@ -667,6 +711,155 @@
         soloGrid.appendChild(span);
       }
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FEATURE 1: CIRCULAR COUNTDOWN RING
+  // ═══════════════════════════════════════════════════════════
+
+  function updateCountdownRing(position, duration, sections) {
+    var rp = ringProgress;
+    var rt = ringTimeEl;
+    var rtl = ringTotalEl;
+    if (!rp) return;
+
+    var circumference = 534;
+    var fraction = duration > 0 ? Math.min(1, Math.max(0, position / duration)) : 0;
+    var remaining = Math.max(0, duration - position);
+
+    rp.setAttribute("stroke-dashoffset", circumference * (1 - fraction));
+
+    if (rt) rt.textContent = formatTime(remaining);
+    if (rtl) {
+      var totalRemaining = duration ? (remaining - 0) : 0;
+      rtl.textContent = remaining > 0 ? "-" + formatTime(totalRemaining) : "0:00";
+    }
+
+    rp.classList.remove("ring-green", "ring-yellow", "ring-red", "ring-paused", "ring-dim", "pulse", "grow-shrink");
+
+    if (duration <= 0 || fraction === 0) {
+      rp.classList.add("ring-dim");
+    } else {
+      var pctRemaining = duration > 0 ? remaining / duration : 0;
+      if (pctRemaining > 0.25) {
+        rp.classList.add("ring-green");
+      } else if (pctRemaining > 0.10) {
+        rp.classList.add("ring-yellow");
+      } else {
+        rp.classList.add("ring-red");
+        rp.classList.add(pctRemaining < 0.05 ? "grow-shrink" : "pulse");
+      }
+    }
+
+    if (sections && sections.length > 0 && duration > 0) {
+      renderRingTickMarks(sections, duration);
+    }
+  }
+
+  function renderRingTickMarks(sections, duration) {
+    var ticks = ringTicks;
+    if (!ticks || !sections || !duration) return;
+    ticks.innerHTML = "";
+
+    var cx = 100, cy = 100, r = 88;
+    for (var i = 0; i < sections.length; i++) {
+      var sec = sections[i];
+      var secTime = sec.time !== null && sec.time !== undefined
+        ? sec.time
+        : ((sec.bar - 1) * 4 * 60) / 120;
+      if (secTime <= 0 && i > 0) continue;
+      
+      var angle = ((secTime / duration) * 360) - 90;
+      var rad = angle * Math.PI / 180;
+      
+      var x1 = cx + (r - 6) * Math.cos(rad);
+      var y1 = cy + (r - 6) * Math.sin(rad);
+      var x2 = cx + (r + 4) * Math.cos(rad);
+      var y2 = cy + (r + 4) * Math.sin(rad);
+      
+      var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", x1);
+      line.setAttribute("y1", y1);
+      line.setAttribute("x2", x2);
+      line.setAttribute("y2", y2);
+      line.setAttribute("stroke", "#fff");
+      line.setAttribute("stroke-width", "2");
+      ticks.appendChild(line);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FEATURE 3: INLINE SECTION LABEL — appears above current lyrics
+  // ═══════════════════════════════════════════════════════════
+
+  var SECTION_COLORS = {
+    "intro": "#9b59b6", "verse": "#3498db", "chorus": "#2ecc71",
+    "pre-chorus": "#1abc9c", "bridge": "#f1c40f", "solo": "#e67e22",
+    "outro": "#7f8c8d", "interlude": "#e91e90"
+  };
+
+  var _lastLabelIdx = -1;
+
+  function updateSectionLabel(sections, position, bpm) {
+    if (!sectionLabel || !sections || sections.length === 0) return;
+
+    var idx = -1;
+    for (var i = sections.length - 1; i >= 0; i--) {
+      var secTime = sections[i].time !== null && sections[i].time !== undefined
+        ? sections[i].time
+        : ((sections[i].bar - 1) * 4 * 60) / (bpm || 120);
+      if (position >= secTime) { idx = i; break; }
+    }
+
+    if (idx >= 0 && idx !== _lastLabelIdx) {
+      _lastLabelIdx = idx;
+      var sec = sections[idx];
+      var label = sec.text || sec.token || "";
+      label = cleanLabel(label).toUpperCase();
+      var color = SECTION_COLORS[sec.type] || "#4fc3f7";
+
+      sectionLabel.textContent = label;
+      sectionLabel.style.color = color;
+      sectionLabel.classList.add("visible");
+    }
+  }
+
+  function fadeSectionLabel() {
+    if (sectionLabel) sectionLabel.classList.remove("visible");
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FEATURE 4+5: SONG TRANSITION + FIRST-SONG SAFETY
+  // ═══════════════════════════════════════════════════════════
+
+  function showSongTransition(title, key, bpm) {
+    var overlay = songTransition;
+    if (!overlay) return;
+    if (stTitle) stTitle.textContent = title || "\u2014";
+    if (stMeta) stMeta.textContent = (key || "\u2014") + "  \u2669=" + (bpm || "\u2014");
+    overlay.style.display = "flex";
+    overlay.offsetHeight;
+    overlay.classList.add("visible");
+  }
+
+  function hideSongTransition() {
+    var overlay = songTransition;
+    if (!overlay) return;
+    overlay.classList.remove("visible");
+    setTimeout(function () {
+      overlay.style.display = "none";
+    }, 500);
+  }
+
+  function clearLyricsDisplay() {
+    for (var i = 0; i < lineEls.length; i++) {
+      lineEls[i].innerHTML = "";
+    }
+    loadingEl.style.display = "block";
+    loadingEl.textContent = "";
+    parsedLines = [];
+    parsedDirectives = {};
+    lyricEngine._prepared = false;
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -878,9 +1071,10 @@
     if (notesTimeout) clearTimeout(notesTimeout);
     hudNotes.textContent = text || "";
     hudNotes.classList.add("visible");
+    var duration = isFirstSong ? 15000 : 8000;
     notesTimeout = setTimeout(function () {
       hudNotes.classList.remove("visible");
-    }, 8000);
+    }, duration);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -948,6 +1142,8 @@
     socket.on("connect", function () {
       statusText.innerHTML = "&#9679; Connected";
       statusText.className = "status-dot connected";
+      isFirstSong = true;
+      lastSongId = null;
     });
 
     socket.on("disconnect", function () {
@@ -969,10 +1165,32 @@
       topKey.textContent = s.currentKey || "\u2014";
       topBpm.textContent = s.bpm || "\u2014";
 
-      if (s.songId && s.songId !== currentSongId) {
-        fetchAndRenderChords(s.songId);
+      // ── Song change transition (Feature 5) ──
+      if (s.songId && s.songId !== lastSongId) {
+        if (lastSongId !== null) {
+          clearLyricsDisplay();
+          showSongTransition(s.currentSong, s.currentKey, s.bpm);
+          if (songTransitionTimeout) clearTimeout(songTransitionTimeout);
+          songTransitionTimeout = setTimeout(function () {
+            hideSongTransition();
+            fetchAndRenderChords(lastSongId);
+          }, 2000);
+        } else {
+          fetchAndRenderChords(s.songId);
+        }
+        lastSongId = s.songId;
         if (s.notes) showNotes(s.notes);
         lastSectionIdx = -1;
+        _lastLabelIdx = -1;
+        fadeSectionLabel();
+
+        // First-song mode: start 15s countdown (Feature 4)
+        if (isFirstSong) {
+          if (firstSongTimeout) clearTimeout(firstSongTimeout);
+          firstSongTimeout = setTimeout(function () {
+            isFirstSong = false;
+          }, 15000);
+        }
       }
 
       // Sync health warning
@@ -986,9 +1204,10 @@
       // Conductor Counter & Metronome
       updateConductor(s.position || 0, s.bpm || 0);
 
-      // Playhead slide
-      var pct = s.duration ? Math.min(100, ((s.position || 0) / s.duration) * 100) : 0;
-      progressFill.style.left = pct + "%";
+      // Countdown ring (Feature 1)
+      updateCountdownRing(s.position || 0, s.duration || 0, s.sections);
+
+      // Time display
       footerElapsed.textContent = formatTime(s.position);
       footerTotal.textContent = formatTime(s.duration);
 
@@ -1001,8 +1220,10 @@
 
       var barCalc = Math.floor((s.position || 0) * (s.bpm || 0) / (4 * 60)) + 1;
 
-      // Section markers & playhead
+      // Section label (Feature 3) + Timeline
       if (s.sections && s.sections.length > 0) {
+        updateSectionLabel(s.sections, s.position || 0, s.bpm || 120);
+
         var totalBars = Math.floor((s.duration || 0) * (s.bpm || 0) / (4 * 60)) + 1;
         renderTimelineNotches(s.sections, barCalc, totalBars || 128);
       }

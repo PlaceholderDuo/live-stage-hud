@@ -1,0 +1,139 @@
+═══════════════════════════════════════════════════════════════
+HANDOFF 6: Amp Preset Expansion + V25 Knob Values
+═══════════════════════════════════════════════════════════════
+The iPhone controller's amp page has 3 presets (BE, SSS,
+Acoustic) but the IPHONE-CONTROLLER-SPEC.md calls for 7.
+Also, the Alesis V25 physical knob labels always show "--"
+because REAPER feedback isn't wired up.
+
+Files: controller.js, controller.css, index.html, server.js
+Touches the amp page + server OSC feedback, independent of
+other handoffs.
+
+═══════════════════════════════════════════════════════════════
+TASK 1: Expand Amp Presets from 3 → 7
+═══════════════════════════════════════════════════════════════
+
+Current presets (in controller.js + server.js):
+  BE (DRIVE/red), SSS (CLEAN/blue), Acoustic (ACOUSTIC/green)
+
+Spec presets (from IPHONE-CONTROLLER-SPEC.md):
+  OSD     — Dumble ODS (warm overdrive)
+  SSS     — Fender Super Six (sparkling clean)
+  SSS CLN — SSS with no drive (ultra clean)
+  BE      — Friedman BE-100 (classic rock crunch)
+  BE CLN  — BE with gain rolled back (edge of breakup)
+  TRLX    — Trainwreck Express (singing lead)
+  TWD     — Fender Tweed (vintage sag)
+
+Implementation:
+
+A) Add the 4 new presets to server.js OSC handling:
+  - Find the amp select handler (search "/amp/select/")
+  - Add cases for OSD, SSS_CLN, BE_CLN, TRLX, TWD
+  - Each sends appropriate OSC: /amp/select/{preset}
+  - Same format as existing BE/SSS/Acoustic
+
+B) Add to controller.js amp page:
+  - Extend the preset array from 3 to 7 entries
+  - Each entry: { id, name, color, label }
+  - Colors: OSD=#e67e22(orange), SSS=#3498db(blue),
+    SSS_CLN=#85c1e9(light blue), BE=#e74c3c(red),
+    BE_CLN=#f1948a(light red), TRLX=#9b59b6(purple),
+    TWD=#f39c12(amber)
+  - The confirmation animation (existing) should work for all
+
+C) Home page amp button:
+  - Currently shows 3-preset label with color badge
+  - Update to show active preset name + color
+  - Tap cycles through presets or opens preset page?
+
+D) Send the preset OSC command on selection:
+  - Existing code: server sends /amp/select/BE etc.
+  - Add new presets to the OSC routing table in server.js
+
+═══════════════════════════════════════════════════════════════
+TASK 2: Wire V25 Knob Values from REAPER Feedback
+═══════════════════════════════════════════════════════════════
+
+Current: Knob labels show "--" for all 4 physical knobs.
+The REAPER OSC feedback sends /track/{N}/volume [dB] which
+the server receives but the iPhone never displays.
+
+Implementation:
+
+A) Server already receives track volume feedback:
+  - OSC handler: /track/{N}/volume → state.trackVolumes[N] = dB
+  - These go into broadcastState() → WebSocket → iPhone
+
+B) Server also receives mix values:
+  - state.mixerValues already exists
+  - These map to the EDM/GTR FX knob displays
+  - Currently broadcast in state payload but not used by
+    the home page knob strip
+
+C) Controller.js home page knob strip:
+  - Currently shows hardcoded "--" for all 4 labels
+  - Read values from state.trackVolumes for the 4 tracks
+    that map to V25 knobs (VOX, GTR, BASS, REV MST)
+  - Map: find which track indices correspond to each label
+    (likely track 1=VOX, track 2=GTR, track 3=BASS, track 4=REV)
+  - Display: "VOX" + value in small text, e.g. "VOX\n-3.2"
+  - Color the value: green if -18 to -6, yellow if -6 to 0,
+    red if >0 (clipping)
+  - If no value available, leave blank (not "--")
+
+D) Make the knob strip dynamic:
+  - Per-page knob labels already update (EDM: FILTER/RES/REV/DELAY,
+    GTR FX: DELAY/FEEDBK/MOD RT/MOD DP)
+  - Wire up the mixerValues to these per-page labels
+  - Server already has per-client knob context
+  - Send knob values as part of state for the active page
+
+E) Optional: Add dB meters next to knob labels:
+  - Mini vertical bars (like the track meters on HUD)
+  - 4px wide, 20px tall
+  - Fill proportional to level
+  - Green → yellow → red at -6dB → 0dB → +3dB
+
+═══════════════════════════════════════════════════════════════
+SERVER CHANGES (server.js)
+═══════════════════════════════════════════════════════════════
+
+A) Amp preset OSC routing:
+  // Add to existing amp select handler:
+  case "OSD": reaper.send({ address: "/amp/select/OSD" }); break;
+  case "SSS_CLN": reaper.send({ address: "/amp/select/SSS_CLN" }); break;
+  ... etc for BE_CLN, TRLX, TWD
+
+B) Knob value mapping:
+  // In broadcastState, include knobValues for active tab:
+  var knobContext = clientContexts.get(socket.id);
+  if (knobContext && knobContext.activeTab) {
+    var tabKnobValues = getKnobValuesForTab(knobContext.activeTab);
+    payload.knobValues = tabKnobValues;
+  }
+
+C) getKnobValuesForTab(tab) helper:
+  - "show": { 1: trackVolumes[1], 2: trackVolumes[2], ... }
+  - "edm": { 1: mixerValues["1-2-14"], 2: mixerValues["2-2-14"], ... }
+  - Map track/FX indices to the 4 knob slots per page
+
+═══════════════════════════════════════════════════════════════
+FILES
+═══════════════════════════════════════════════════════════════
+
+  web/public/controller.js       ← Amp preset page + knob display
+  web/public/controller.css      ← Preset button colors + meter bars
+  web/public/index.html          ← Amp page HTML (if needed)
+  web/server.js                  ← OSC routing + knob value mapping
+
+═══════════════════════════════════════════════════════════════
+NOTE
+═══════════════════════════════════════════════════════════════
+
+The REAPER side needs to be configured to send OSC feedback for
+these new presets. The server just routes the commands — the
+actual preset switching happens in ReaLearn or a similar REAPER
+plugin. Confirm with the user before adding presets that don't
+have corresponding REAPER configurations.

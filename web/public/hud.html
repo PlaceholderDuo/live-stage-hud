@@ -13,6 +13,11 @@
   <div id="heartbeatBanner" class="heartbeat-banner" style="display:none;">SIGNAL LOST — CHECK SERVER</div>
   <div id="syncWarning" class="sync-warning" style="display:none;"></div>
 
+  <div id="songTransition" class="song-transition" style="display:none;">
+    <div id="stTitle" class="song-transition-title"></div>
+    <div id="stMeta" class="song-transition-meta"></div>
+  </div>
+
   <div id="hudGrid">
 
     <!-- ── 1. GLOBAL HEADER — Compact left metadata & High-Contrast Conductor ── -->
@@ -41,7 +46,7 @@
       </div>
     </header>
 
-    <!-- ── 2. METRO MAP TIMELINE — Horizontal train of blocks ── -->
+    <!-- ── 2. SECTIONS — Pill strip + Metro Map Timeline ── -->
     <nav id="hudSections">
       <div id="metroMap" class="metro-map"></div>
     </nav>
@@ -51,14 +56,13 @@
       
       <!-- Rolling Lyrics Engine (6-line display) -->
       <div id="lyricEngine" class="lyric-engine">
-        <div id="currentSectionLabel"></div>
+        <div id="sectionLabel" class="section-inline-label"></div>
         <div id="linePast3" class="tp-line past-3"></div>
         <div id="linePast2" class="tp-line past-2"></div>
         <div id="linePast1" class="tp-line past-1"></div>
         <div id="linePresent" class="tp-line present"></div>
         <div id="lineFuture1" class="tp-line future-1"></div>
         <div id="lineFuture2" class="tp-line future-2"></div>
-        <div id="futureSectionLabel"></div>
       </div>
 
       <!-- Solo Protocol Engine -->
@@ -78,14 +82,22 @@
 
     <!-- ── 4. STATUS ANCHOR — Master progress bar + notches + Next Song ── -->
     <footer id="hudFooter">
+      <div id="footerLeft">
+        <div id="countdownRing" class="countdown-ring">
+          <svg viewBox="0 0 200 200">
+            <circle cx="100" cy="100" r="85" class="ring-bg"/>
+            <circle cx="100" cy="100" r="85" class="ring-progress" stroke-linecap="round"/>
+            <g id="ringTicks"></g>
+            <text x="100" y="92" class="ring-time" text-anchor="middle">0:00</text>
+            <text x="100" y="118" class="ring-total" text-anchor="middle">-0:00</text>
+          </svg>
+        </div>
+      </div>
       <div id="footerCenter">
         
         <!-- Timeline and notches -->
         <div id="timelineContainer">
           <div id="timelineNotches"></div>
-          <div id="progressContainer">
-            <div id="progressFill"></div>
-          </div>
         </div>
 
         <div id="footerTimeRow">

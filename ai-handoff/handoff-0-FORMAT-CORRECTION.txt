@@ -1,0 +1,186 @@
+═══════════════════════════════════════════════════════════════
+CORRECTION: ChordPro file format changed (2026-07-30)
+═══════════════════════════════════════════════════════════════
+AFFECTS: Every handoff that references @time=N, @bar=N,
+{start_of_verse}, {end_of_chorus}, or song.chopro format.
+
+All 328 song.chopro files were migrated to a compact format.
+The old parser and all handoff examples showing the old syntax
+are STALE. Use the format below for any new code, edits, or
+generation scripts.
+
+═══════════════════════════════════════════════════════════════
+THE NEW FORMAT
+═══════════════════════════════════════════════════════════════
+
+{title: Song Title}
+{artist: Artist Name}
+{key: Gm}
+{bpm: 94}
+
+## Chorus 1 @0.0
+  [Gm]I [Cm]shot [Gm]the sheriff, but I did not shoot the deputy @2.0
+  [Cm]I [Gm]shot the sheriff, but I did not shoot the deputy @4.0
+
+## Verse 1 @16.0
+  /Bb/Eb Dm7 Gm/
+  All around in my home town @16.0
+  /Bb/Eb Dm7 Gm/
+  They're trying to track me down @24.0
+
+RULES:
+  1. ## starts a section header. Name followed by optional @seconds.
+     Section type is auto-detected: "Chorus" → chorus, "Verse" → verse,
+     "Solo" → solo, "Bridge" → bridge, "Intro" → intro, "Outro" → outro.
+  2. Content lines start with 2 spaces (visual indent, stripped by parser).
+  3. @seconds at end of a content line is the timestamp (float, no "=").
+  4. /Chord1 Chord2/ wraps bare chord rows (no lyrics). Parser merges
+     these into the next lyric line automatically.
+  5. Metadata directives stay as {key: value} at the top of the file.
+  6. No {end_of_*} directives — the next ## header implies previous ended.
+  7. No @bar=N — bar position is derived from @time + BPM in code.
+  8. No @time= prefix — just @N.N (the "=" served no purpose).
+
+═══════════════════════════════════════════════════════════════
+OLD → NEW MAPPING (for reading stale code / handoff refs)
+═══════════════════════════════════════════════════════════════
+
+OLD:                                    NEW:
+──────────────────────────────────────  ──────────────────────
+{start_of_verse: Verse 1}              ## Verse 1 @16.0
+{start_of_chorus: Chorus 1}            ## Chorus 1 @0.0
+{end_of_verse}                         (deleted)
+{end_of_chorus}                        (deleted)
+@time=0.00 @bar=1  [Gm]lyric text      [Gm]lyric text @0.0
+@time=16.00 @bar=9  All around...       All around... @16.0
+Bb/Eb Dm7 Gm                           /Bb/Eb Dm7 Gm/
+G - D - Em - C                         /G - D - Em - C/
+
+═══════════════════════════════════════════════════════════════
+WHAT WAS CHANGED
+═══════════════════════════════════════════════════════════════
+
+Date:    2026-07-30
+Script:  scripts/migrate-chopro.js  (walked all 328 files)
+Backup:  Every song.chopro has a .chopro.bak sibling
+Parser:  hud.js parseChordPro() — handles BOTH old and new format
+         Detection: if any line starts with ## → new format path
+                    otherwise → old format path (backward compat)
+Result:  328/328 converted, 0 errors, 0 unchanged
+
+WHY:
+  - @time=N @bar=N on every line was redundant (@bar derivable)
+  - Bug: second replace used raw instead of content, re-inserting @time
+  - {start_of}/{end_of} pairs wasted 2 lines per section boundary
+  - No section timing in directives → needed separate meta.json
+  - Bare chord lines had no explicit marker → ambiguous parsing
+  - Files were ~30-40% larger than needed
+
+═══════════════════════════════════════════════════════════════
+STALE SECTIONS IN EXISTING HANDOFF FILES
+═══════════════════════════════════════════════════════════════
+
+handoff-3-metadata-repair.txt:
+  - References to @time=N, @bar=N, and migrate-to-atime.js
+    are now obsolete. The @time values in the migrated files
+    may still need BPM correction, but the migration script
+    (migrate-to-atime.js) would need rewriting for new format.
+  - Line 70: "the @time values in song.chopro are..."
+    Now: "the @N.N values after ## headers and on content lines"
+
+handoff-4-deep-integration.txt:
+  - Line 53-54: "Parse @time=N annotations into a sorted table"
+    Now: "Parse @N.N at line-ends into a sorted table"
+  - Section format references: {start_of/*} no longer exist
+
+handoff-control-surfaces.txt:
+  - Line 44: example shows old format
+  - Line 104-105: references to @time=N / @bar=N display
+    The HUD no longer receives @bar data. Sync display should
+    track ONLY @time annotations now.
+
+═══════════════════════════════════════════════════════════════
+JAVASCRIPT PARSER REFERENCE (UPDATED 2026-07-30)
+═══════════════════════════════════════════════════════════════
+
+File: web/public/hud.js — function parseChordPro(text)
+
+Detection: if ANY line starts with ## → isNewFormat = true
+
+Key behavior:
+  - Lines starting with ## → section header (extracts label + @time)
+  - Lines starting with { → metadata directives
+  - Lines starting with /text/ → bare chord markers (unwrapped)
+  - Content lines: extract trailing @N.N, unwrap /bare chords/
+
+IMPORTANT — Backward Compatibility Fallback:
+  The migration was NOT perfectly clean. Some lines in new-format
+  files still have old @time=N @bar=N prefixes (e.g., songs like
+  "I Shot the Sheriff", "Come Together", "Wild Horses").
+
+  The parser handles this with a fallback in the isNewFormat branch:
+    1. Try trailing @N.N extraction (lastIndexOf("@"))
+    2. If null, try old @time=N regex as fallback
+    3. Strip both old and new annotations from content text
+    4. Unwrap /bare chord/ markers
+
+  DO NOT REMOVE THIS FALLBACK. It is load-bearing for ~40 songs
+  where the migration left mixed old/new annotations.
+
+  Without the fallback: 42/43 lines in "I Shot the Sheriff" lose
+  their timing and fall through to estimateLineTimes().
+
+  With the fallback: 24/28 lyric lines correctly timed in same file.
+
+This pattern exists in THREE parsers — all must stay consistent:
+  hud.js          parseChordPro()       — HUD client display
+  server.js       extractLyricLines()   — sync health + lyric API
+  verify-lyric-sync.js parseChoproLines() — verification tool
+
+  All three now have:
+    1. Try trailing @N.N (for clean new-format lines)
+    2. Fallback to @time=N regex (for mixed-format lines)
+    3. Strip both annotation types from cleaned text
+
+Old format fallback: if no ## lines detected anywhere in the file,
+uses @time=N regex + {start_of_*} / {end_of_*} parsing exclusively.
+
+post-processing: bare chord rows (all tokens are chord names)
+get their chords merged into the next lyric line via
+isChordOnlyLine() → pendingChords[] → merged pairs.
+
+═══════════════════════════════════════════════════════════════
+PARSER RULES FOR ANY NEW CODE
+═══════════════════════════════════════════════════════════════
+
+When writing a NEW chopro parser (e.g., in Lua for runner.lua):
+
+  1. Skip lines starting with ## (section headers)
+  2. Skip lines starting with { (metadata)
+  3. Skip /bare chord marker/ lines
+  4. For content lines:
+     a. Try trailing @N.N: match /\s@([\d]+\.?\d{1,2})\s*$/
+     b. If no match, try old prefix @time=N: match /@time\s*=\s*([\d]+\.?\d*)/
+     c. Strip: /@time\s*=\s*[\d]+\.?\d*/gi, /@bar\s*=\s*\d+/gi, /\s@[\d]+\.?\d{1,2}\s*$/g
+     d. The cleaned text is the lyric content
+
+═══════════════════════════════════════════════════════════════
+TESTING
+═══════════════════════════════════════════════════════════════
+
+Verify any migrated file:
+  head -10 ~/ReaperSongs/Gravity/song.chopro    (clean new format)
+  head -10 ~/ReaperSongs/I\ Shot\ the\ Sheriff/song.chopro  (mixed)
+
+Quick test for parser correctness:
+  node tools/verify-lyric-sync.js --song "Gravity"
+  node tools/verify-lyric-sync.js --song "I Shot the Sheriff"
+  Both should show >80% coverage with @time=N annotation lines.
+
+Revert a file to old format:
+  cp song.chopro.bak song.chopro
+
+Re-run migration:
+  node scripts/migrate-chopro.js
+
+═══

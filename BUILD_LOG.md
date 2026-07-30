@@ -2,7 +2,82 @@
 
 **Project:** Live Stage HUD — iPhone Controller  
 **Device:** iPhone 7 (horizontal, behind Alesis V25 knobs)  
-**Started:** 2026-07-11  
+**Started:** 2026-07-11
+
+---
+
+## 2026-07-30: Stage HUD Visual Upgrade (5 Spec Features)
+
+### Summary
+
+Implemented all five visual features from `STAGE-HUD-SPEC.md` that were designed but never built. The current HUD used simpler placeholders (linear bar, yellow chords, no pills). All work in `web/public/hud.html`, `hud.css`, `hud.js`.
+
+---
+
+### 1. Circular Countdown Ring (SVG)
+
+Replaced the linear progress bar with an SVG countdown ring (170px) in the footer-left area. Metro Map timeline preserved.
+
+- **SVG**: 200x200 viewBox, background track + progress arc sweeping clockwise
+- **Color transitions**: Green (>25%), Yellow (10-25%), Red (<10%), Dim cyan (paused)
+- **Animations**: Pulse glow at <10%, grow/shrink at last 4 bars
+- **Tick marks**: Radial lines at section boundary angles from `sections[].time`
+- **Inner text**: Remaining time (28px bold) + total remaining (13px gray)
+- **JSS**: `updateCountdownRing()` + `updateRingTicks()` in hud.js
+
+---
+
+### 2. 12-Color Chord Coloring (Circle of Fifths)
+
+All chords were previously yellow. Now each root note maps to a Circle of Fifths color, making key changes visible in peripheral vision.
+
+- **Color map**: C=red, D=orange, E=yellow, F=green, G=blue, A=purple, B=pink + sharps/flats
+- **Extraction**: `getChordRootColor()` parses `[A-G][b#]?` from chord text (D7→D, F#m→F#)
+- **Applied inline** in `buildLinePairsHTML()` via `chordEl.style.color`
+- **White text-shadow** preserved for stage wash readability
+
+---
+
+### 3. Section Pills Bar
+
+Replaced single section label text with a horizontal pill strip showing all song sections.
+
+- **Location**: `#hudSections` nav, between header and lyrics
+- **States**: PAST (hollow gray, 40% opacity), CURRENT (filled, section-color, bold white), FUTURE (dark outline, muted), UPCOMING (glow pulse within 2 bars)
+- **Colors**: Intro=purple, Verse=blue, Chorus=green, Solo=orange, Bridge=yellow, Outro=gray
+- **Server tokens**: Uses precomputed `sections[].token` from WebSocket state
+- **JSS**: `renderSectionPills()` called every state update
+
+---
+
+### 4. First-Song Safety Mode
+
+When the first song of the night starts, shows all section pills bright and extends notes display.
+
+- **Flag**: `isFirstSong = true` set on WebSocket connect
+- **Trigger**: First song start → 15-second countdown
+- **Behavior**: All pills bright (not past/future), notes persist 15s instead of 8s
+- **Reset**: Auto-clears after 15s; re-arms on reconnect
+
+---
+
+### 5. Song Change Transition
+
+Brief overlay showing next song info before loading new lyrics.
+
+- **Trigger**: `songId` change detected in WebSocket state handler
+- **Overlay**: Centered fullscreen black div with title (72px), key, BPM
+- **Duration**: 2s, then fades to new lyrics
+- **CSS**: Opacity transition on fixed overlay
+
+### Files Modified
+
+```
+web/public/hud.html  — Added SVG ring, section pills container, transition overlay, footer restructure
+web/public/hud.css   — Ring animations, pill states, transition styles, footer flex-row layout
+web/public/hud.js    — 5 feature functions, chord coloring, state handler integration
+BUILD_LOG.md         — This entry
+```  
 
 > ⚠ **2026-07-30: Project Map Clarification** — This project is ONE of THREE
 > in the Live Show System. The main show server is `~/Music/iPhoneLiveServer/`
@@ -10,6 +85,81 @@
 > has been DELETED — it was an old tunnel/QR manager, superseded by the
 > full TUI at `~/Music/iPhoneLiveServer/scripts/tui.js` (1379 lines).
 > See `~/Library/.../Live Show Manager/web/` for the REAPER bridge (port 3000).
+
+---
+
+## 2026-07-30: ChordPro Format Migration (Phase 2)
+
+### Why
+
+The existing `.chopro` format had several pain points that caused parsing bugs,
+redundancy, and made the files heavier than needed:
+
+| Problem | Example |
+|---------|---------|
+| **Dual annotations** | `@time=10.00 @bar=6` on every synced line — `@bar` is derivable from `@time` + BPM, just adds noise |
+| **Annotation stripping bugs** | Parser used `raw.replace()` for one annotation, then `raw.replace()` (not `content.replace()`) for the other — re-introduced the first annotation |
+| **Verbose section markers** | `{start_of_chorus: Chorus 1}` / `{end_of_chorus}` — 2 lines per section boundary, redundant end markers |
+| **No section timing** | Section directives had no `@time` — required separate `meta.json` for section boundaries (ring tick marks) |
+| **Bare chord ambiguity** | `G - D - Em - C` — parser had to guess if a line was chords or lyrics without any annotation |
+| **Mixed metadata in directives** | Some `{start_of_verse}` directives contained URLs, formatting notes, or other non-section metadata |
+
+### New Format
+
+```
+{title: I Shot the Sheriff}
+{artist: Eric Clapton}
+{key: Gm}
+{bpm: 94}
+
+## Chorus 1 @0.0
+  [Gm]I [Cm]shot [Gm]the sheriff, but I did not shoot the deputy @2.0
+  [Cm]I [Gm]shot the sheriff, but I did not shoot the deputy @4.0
+
+## Verse 1 @16.0
+  /Bb/Eb Dm7 Gm/
+  All around in my home town @16.0
+  /Bb/Eb Dm7 Gm/
+  They're trying to track me down @24.0
+```
+
+| Old | New | Rationale |
+|-----|-----|-----------|
+| `{start_of_chorus: Chorus 1}` | `## Chorus 1 @0.0` | Markdown-style header, section time inline |
+| `{end_of_chorus}` | *(deleted)* | Next `##` header implies previous section ended |
+| `@time=10.00 @bar=6` | `@10.0` | Single float timestamp, bar derived in parser |
+| `G - D - Em - C` | `/G - D - Em - C/` | Explicit bare-chord marker, unambiguous |
+| `  I got my [D]first` | `  [Gm]I [Cm]shot... @2.0` | Consistent `  ` indent, `@time` at line end |
+
+### Migration
+
+- **Script**: `scripts/migrate-chopro.js` — walked all 328 `.chopro` files in `~/ReaperSongs/`
+- **Backups**: All originals saved as `song.chopro.bak`
+- **Result**: 328/328 converted, 0 errors, 0 unchanged
+- **Parser**: `parseChordPro()` in `hud.js` now handles both new and old format. Detects `##` headers to choose format. Backward-compatible with existing `.bak` files.
+
+### Key design decisions
+
+| Decision | Why |
+|----------|-----|
+| `@seconds` (not `@time=`) | Saves 5 bytes per annotation. Unambiguous — `@` followed by a number on a content line is always a timestamp. |
+| `##` section markers | Visually distinct from metadata `{}` and content lines. Markdown-inspired — readable in any text editor. |
+| Bare chords wrapped in `/ /` | Explicit, parseable with `charAt(0) === "/"` in one op. No regex needed to distinguish from lyrics. |
+| 2-space indent on content lines | Readability in text editors. Stripped by parser (`trim()`). |
+| Backward-compatible parser | Detects `##` presence to switch between new and old parsing paths. Old `.bak` files still parse correctly. |
+| `@bar` derived, not stored | `_bar = Math.floor(_time * bpm / 240) + 1` — one formula replaces per-line storage. |
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `scripts/migrate-chopro.js` | **NEW** — one-shot migration script, walks ReaperSongs, converts old→new format |
+| `web/public/hud.js` | `parseChordPro()` rewritten — dual-format parser, `##` detection, `@seconds` extraction |
+| `~/ReaperSongs/*/song.chopro` | 328 files migrated to new format |
+| `~/ReaperSongs/*/song.chopro.bak` | 328 backup files preserved |
+| `BUILD_LOG.md` | This entry |
+
+
 
 ---
 
@@ -1617,4 +1767,89 @@ $ curl -X POST .../api/local/setlist/load -d '{"name":"Friday Show"}'
 | `POST /api/local/setlist/save` | Save current setlist to named file |
 | `GET /api/local/setlist/list` | List all saved setlists |
 | `POST /api/local/setlist/load` | Load a saved setlist by name |
+
+---
+
+## 2026-07-30 — Bug Fixes + Performance + Seek Controls
+
+### Session: HUD beat stutter, CPU optimization, skip controls, @time display fix
+
+#### Issue 1: HUD beat counter stuttering
+
+**Root cause:** The 60fps local playback tick's broadcast throttle was broken dead code — `Math.floor(elapsed * 10) !== Math.floor((state.position || 0) * 10)` was always `false` because `state.position` was just set to `elapsed` on the previous line. The only broadcasts came from the 2Hz Lua poll loop (every 500ms). At 120 BPM, beats happen every 500ms — so the HUD got 1 position update per beat, making the counter skip/jump.
+
+**Fix (server.js):**
+- Changed 60fps → 30fps (`setInterval(..., 33)`) — halves timer wakeups
+- Fixed broadcast throttle: uses `lastBroadcastPos` tracker instead of broken comparison. Broadcasts at actual ~10fps (every 100ms of playback time)
+
+**Fix (hud.js):**
+- Added `predictedPosition()` — client-side interpolation between state broadcasts (same pattern iPhone controller already used)
+- Added 100ms conductor loop — keeps bar/beat counter ticking smoothly even between broadcasts
+- All position-dependent rendering (conductor, playhead, rolling engine) now uses interpolated position
+
+#### Issue 2: Skip forward/backward (±5s)
+
+**`server.js`:**
+- New `localSeekOffset(offset)` — adds offset seconds to current position, clamps to [0, duration]
+- `POST /api/local/seek` with `{ offset: N }` — works in local playback mode (paused or playing)
+- WebSocket `seek` action handler for iPhone Socket.IO clients
+
+**`tui.js`** (real TUI at `~/Music/iPhoneLiveServer/scripts/tui.js`, not the deleted showman.js):
+- `]` = seek forward 5s (0x5D)
+- `[` = seek back 5s (0x5B)
+- Actions box shows `[[] / []] Seek 5s`
+- Box height increased from 2 → 3 rows to fit new row
+
+**`controller.js`:**
+- Settings toggle "Nudge Controls" (default OFF — disabled for click-track sync mode)
+- When ON: `⟵5s` and `5s⟶` buttons appear on transport bar
+- `sendCommand('seek', { offset: ±5 })` via Socket.IO
+
+#### Issue 3: @time/@bar visible in lyric display
+
+**`hud.js`:**
+- `parseChordPro()` only stripped `@bar=` prefix, not `@time=`
+- Fixed regex: `/^@(?:time|bar)\s*=\s*\S+\s*/gi` strips both annotations from displayed text
+- Server's `extractLyricLines()` was already correct (verified clean output)
+
+#### Issue 4: MacBook TUI CPU stats overlap
+
+**`tui.js`:**
+- CPU stats row was positioned at `(w - 46)` which overlapped the left "NOW PLAYING" panel
+- Moved to dedicated row at `ct + ch + 1` (below both panels), column 2
+
+#### Issue 5: Shift+S launching Safari / Dell HUD
+
+**`tui.js`:**
+- Removed `start-show live` transition from Shift+S handler
+- Shift+S now always stops the HUD
+- New Shift+L handler (0x4C) for the "Go LIVE" transition
+- Banner updated: `[Shift+L] Go LIVE  [Shift+S] Stop HUD`
+
+#### Issue 6: Dell TUI CPU measurement blocking render
+
+**`dell-status-tui.sh`:**
+- `get_cpu_pct()` used `sleep 0.3` on every frame — 300ms blocking render
+- Now caches previous `/proc/stat` reading in `/tmp/dell-cpu-cache`
+- Only re-measures every 2 seconds — most frames render instantly
+
+#### Files Changed
+
+| File | Changes |
+|------|---------|
+| `LSM/web/server.js` | 30fps tick, fixed throttle, `localSeekOffset()`, `POST /api/local/seek`, WebSocket `seek` handler |
+| `LSM/web/public/hud.js` | Client-side position interpolation, 100ms conductor loop, @time/@bar stripping fix |
+| `~/Music/iPhoneLiveServer/scripts/tui.js` | Seek keys `[`/`]`, CPU row reposition, Shift+S→stop, Shift+L→live, actions box resize |
+| `~/Documents/projects/live-stage-hud/scripts/dell-status-tui.sh` | Cached CPU measurement (2s interval instead of 300ms block) |
+| `live-stage-hud/web/public/controller.js` | Nudge controls toggle + transport buttons |
+
+#### Verified working
+
+```
+$ curl -X POST .../api/local/seek -d '{"offset":5}'
+{"ok":true,"position":5,"playing":false}
+$ curl -X POST .../api/local/seek -d '{"offset":-3}'
+{"ok":true,"position":2,"playing":false}
+→ During playback: position jumps +10s mid-play, continues ticking
+```
 

@@ -14,8 +14,11 @@
     keysOn: true,
     activeScene: null,
     activeSong: null,
-    activeAmpPreset: 'BE',
+    activeAmpPreset: 'OSD',
     lyricLines: [],
+    songArtist: null,
+    songKey: null,
+    sections: [],
     settings: loadSettings(),
     lastStateTime: 0,
     lastPosition: 0,
@@ -29,11 +32,12 @@
     mixerValues: {},
     tuner: null,
     knobLabels: {
-      1: { name: 'VOX', value: '--', color: '#1abc9c' },
-      2: { name: 'GTR', value: '--', color: '#ff8800' },
-      3: { name: 'BASS', value: '--', color: '#3399ff' },
-      4: { name: 'REV MST', value: '--', color: '#9b59b6' },
+      1: { name: 'VOX', value: '', color: '#1abc9c' },
+      2: { name: 'GTR', value: '', color: '#ff8800' },
+      3: { name: 'BASS', value: '', color: '#3399ff' },
+      4: { name: 'REV MST', value: '', color: '#9b59b6' },
     },
+    loopStates: [],
   };
 
   // ─── Settings Persistence ────────────────────────────
@@ -105,6 +109,9 @@
         el.querySelector('.knob-label-name').textContent = labelData.name;
         el.querySelector('.knob-label-value').textContent = labelData.value;
         el.querySelector('.knob-label-name').style.color = labelData.color;
+        if (labelData.valueColor) {
+          el.querySelector('.knob-label-value').style.color = labelData.valueColor;
+        }
       }
     });
   }
@@ -118,6 +125,47 @@
       }
     });
     updateKnobStrip(state.currentPage);
+  }
+
+  function updateHomeKnobValues() {
+    var trackMap = {
+      1: { track: 6, name: 'VOX', color: '#1abc9c' },
+      2: { track: 5, name: 'GTR', color: '#ff8800' },
+      3: { track: 1, name: 'BASS', color: '#3399ff' },
+      4: { track: null, name: 'REV MST', color: '#9b59b6' },
+    };
+    var knobUpdates = {};
+    [1, 2, 3, 4].forEach(function (knob) {
+      var map = trackMap[knob];
+      if (!map) return;
+      var vol = map.track !== null
+        ? (state.trackVolumes[map.track] || state.trackVolumes[String(map.track)])
+        : undefined;
+      if (vol !== undefined && vol !== null && typeof vol === 'number' && vol > 0) {
+        var db = 20 * Math.log10(vol);
+        var dbStr = db.toFixed(1) + ' dB';
+        var valueColor, meterClass;
+        if (db > 0)      { valueColor = '#e74c3c'; meterClass = 'meter-hot'; }
+        else if (db >= -6) { valueColor = '#f39c12'; meterClass = 'meter-warn'; }
+        else if (db >= -18) { valueColor = '#2ecc71'; meterClass = 'meter-good'; }
+        else              { valueColor = '#666';     meterClass = 'meter-good'; }
+        var meterPct = Math.max(0, Math.min(100, ((db + 30) / 33) * 100));
+        knobUpdates[knob] = { name: map.name, value: dbStr, color: map.color, valueColor: valueColor };
+        var meterEl = document.getElementById('meter-' + knob);
+        if (meterEl) {
+          meterEl.style.width = meterPct + '%';
+          meterEl.className = 'knob-meter-fill ' + meterClass;
+        }
+      } else {
+        knobUpdates[knob] = { name: map.name, value: '', color: map.color, valueColor: 'transparent' };
+        var meterEl = document.getElementById('meter-' + knob);
+        if (meterEl) {
+          meterEl.style.width = '0%';
+          meterEl.className = 'knob-meter-fill';
+        }
+      }
+    });
+    setKnobLabels(knobUpdates);
   }
 
   // ─── Connection Status ────────────────────────────────
@@ -260,6 +308,15 @@
       if (msg.lyricLines) {
         state.lyricLines = msg.lyricLines;
       }
+      if (msg.sections) {
+        state.sections = msg.sections;
+      }
+      if (msg.artist !== undefined) {
+        state.songArtist = msg.artist;
+      }
+      if (msg.key !== undefined) {
+        state.songKey = msg.key;
+      }
       // New fields from OSC feedback
       if (msg.trackVolumes) state.trackVolumes = msg.trackVolumes;
       if (msg.trackMutes) state.trackMutes = msg.trackMutes;
@@ -270,6 +327,11 @@
       // Dispatch state to active page
       if (pages[state.currentPage] && pages[state.currentPage].onState) {
         pages[state.currentPage].onState(msg);
+      }
+
+      // Home page knob values from REAPER feedback
+      if (state.currentPage === 'home') {
+        updateHomeKnobValues();
       }
     });
   }
@@ -318,44 +380,59 @@
     render: function (container) {
       var ampColor = getAmpColor(state.activeAmpPreset);
       var ampBadge = getAmpBadge(state.activeAmpPreset);
+      var artist = state.songArtist || '';
+      var key = state.songKey || '';
       container.innerHTML = `
-        <div class="transport-bar" id="transport-bar">
-          <button class="trans-btn" id="btn-prev">⏮</button>
-          <button class="trans-btn trans-play" id="btn-play">▶ PLAY</button>
-          <button class="trans-btn" id="btn-next">⏭</button>
-          <button class="trans-btn trans-seek" id="btn-seek-back" style="display:none;">⟵5s</button>
-          <button class="trans-btn trans-seek" id="btn-seek-fwd" style="display:none;">5s⟶</button>
-          <div class="trans-info">
-            <div class="trans-song" id="trans-song">${state.activeSong || 'No song loaded'}</div>
-            <div class="trans-pos" id="trans-pos">--</div>
+        <div class="song-header">
+          <div class="song-header-left">
+            <div class="song-header-title" id="song-header-title">${state.activeSong || 'No song loaded'}</div>
+            <div class="song-header-meta" id="song-header-meta">${artist ? (artist + (key ? '  \u00B7  ' + key : '')) : ''}</div>
+          </div>
+          <div class="song-header-right">
+            <span class="sync-dot" id="now-playing-sync" title="Lyric sync health" style="display:none;"></span>
           </div>
         </div>
 
+        <div class="section-display" id="section-display">
+          <div class="section-progress-container">
+            <div class="section-progress-bar" id="section-progress-bar"></div>
+            <div class="section-progress-fill" id="section-progress-fill"></div>
+            <div class="section-progress-time" id="section-progress-time">--</div>
+          </div>
+          <div class="section-info-row">
+            <div class="section-current" id="section-current">--</div>
+            <div class="section-next" id="section-next"></div>
+          </div>
+        </div>
+
+        <div class="compact-transport">
+          <div class="transport-bpm" id="transport-bpm">\u2669 ${state.tempo}</div>
+          <div class="transport-bar-num" id="transport-bar-num">BAR 1</div>
+          <div class="transport-play-state" id="transport-play-state">\u25B6</div>
+        </div>
+
         <div class="home-grid">
-          <!-- Row 1: MUTE (safety) + START (primary action) — most prominent -->
           <div class="home-btn mute-btn live" id="btn-mute">
             <span class="home-btn-label" id="mute-label">LIVE</span>
             <span class="home-btn-sub" id="mute-sub">Tap to mute vocal</span>
           </div>
 
           <div class="home-btn start-btn" id="btn-start">
-            <span class="home-btn-label">▶ START</span>
+            <span class="home-btn-label">\u25B6 START</span>
             <span class="home-btn-sub">Next song</span>
           </div>
 
-          <!-- Row 2: Tap Tempo (full width) -->
           <div class="home-btn tap-tempo" id="tap-tempo-btn">
-            <span class="bpm-label">BPM</span>
-            <span class="bpm-display" id="bpm-display">${state.tempo}</span>
+            <span class="home-btn-label" style="color:var(--green);">Tap Tempo</span>
+            <span class="home-btn-sub" id="tap-tempo-sub">Set BPM by tapping</span>
             <div class="pulse-indicator" id="pulse-indicator"></div>
           </div>
 
-          <!-- Row 3: GTR AMP (current preset displayed) + TUNER -->
           <div class="home-btn gtr-amp-home" id="btn-gtr-amp" style="border-color: ${ampColor};">
             <span class="home-btn-label" style="color: ${ampColor};">GTR AMP</span>
             <span class="home-btn-sub" id="gtr-amp-sub">
               <span class="amp-dot" id="amp-dot" style="background: ${ampColor};"></span>
-              ${state.activeAmpPreset}
+              ${formatPresetName(state.activeAmpPreset)}
               <span class="amp-badge" style="color: ${ampColor};">${ampBadge}</span>
             </span>
           </div>
@@ -365,7 +442,6 @@
             <span class="home-btn-sub">Guitar tune</span>
           </div>
 
-          <!-- Row 4: EDM + GTR FX -->
           <div class="home-btn" id="btn-edm" style="border-color: #2ecc71;">
             <span class="home-btn-label" style="color: #2ecc71;">EDM</span>
             <span class="home-btn-sub">Scene control</span>
@@ -376,7 +452,6 @@
             <span class="home-btn-sub">Delay & mod</span>
           </div>
 
-          <!-- Row 5: KEYS + SETLIST -->
           <div class="home-btn keys-btn ${state.keysOn ? 'on' : 'off'}" id="btn-keys">
             <span class="home-btn-label" id="keys-label">${state.keysOn ? 'KEYS ON' : 'KEYS OFF'}</span>
             <span class="home-btn-sub">Hold for VST settings</span>
@@ -387,7 +462,6 @@
             <span class="home-btn-sub">Songs & queue</span>
           </div>
 
-          <!-- Row 6: MIXER + REQUESTS -->
           <div class="home-btn" id="btn-mixer" style="border-color: #7f8c8d;">
             <span class="home-btn-label" style="color: #95a5a6;">Mixer</span>
             <span class="home-btn-sub">Channel levels</span>
@@ -398,113 +472,99 @@
             <span class="home-btn-sub" id="requests-sub">Guest songs</span>
           </div>
 
-          <!-- Row 7: Battery -->
+          <div class="home-btn" id="btn-looper" style="border-color: #9b59b6;">
+            <span class="home-btn-label" style="color: #9b59b6;">LOOPER</span>
+            <span class="home-btn-sub">Mobius loops</span>
+          </div>
+
           <div class="home-btn" id="btn-battery" style="border-color: #f1c40f;">
             <span class="home-btn-label" style="color: #f1c40f;">Battery</span>
             <span class="home-btn-sub" id="battery-sub">No data</span>
           </div>
         </div>
 
-        <!-- Small buttons row -->
         <div class="home-small-row">
           <div class="small-btn" id="btn-bumper">
-            <span>♪ Bumper</span>
-            <span class="double-tap-hint">⟐⟐ DOUBLE TAP</span>
+            <span>\u266A Bumper</span>
+            <span class="double-tap-hint">\u27D0\u27D0 DOUBLE TAP</span>
           </div>
           <div class="small-btn" id="btn-teleprompter">
-            <span>📖 Lyrics</span>
+            <span>\u{1F4D6} Lyrics</span>
           </div>
           <div class="small-btn" id="btn-checklist">
-            <span>✓ Pre-show</span>
+            <span>\u2713 Pre-show</span>
           </div>
           <div class="small-btn" id="btn-settings">
-            <span>⚙ Settings</span>
+            <span>\u2699 Settings</span>
           </div>
         </div>
       `;
     },
 
     onActivate: function (container) {
-      // Restore home knob labels
       setKnobLabels({
-        1: { name: 'VOX', value: '--', color: '#1abc9c' },
-        2: { name: 'GTR', value: '--', color: '#ff8800' },
-        3: { name: 'BASS', value: '--', color: '#3399ff' },
-        4: { name: 'REV MST', value: '--', color: '#9b59b6' },
+        1: { name: 'VOX', value: '', color: '#1abc9c' },
+        2: { name: 'GTR', value: '', color: '#ff8800' },
+        3: { name: 'BASS', value: '', color: '#3399ff' },
+        4: { name: 'REV MST', value: '', color: '#9b59b6' },
       });
 
-      // Transport: Play/Pause
-      document.getElementById('btn-play').addEventListener('click', function () {
-        sendCommand('play');
-      });
+      updateHomeKnobValues();
+      updateHomeTransport();
+      updateSectionDisplay();
+      updateHomeHeader();
 
-      // Transport: Next song
-      document.getElementById('btn-next').addEventListener('click', function () {
-        sendCommand('next');
-      });
-
-      // Transport: Prev song
-      document.getElementById('btn-prev').addEventListener('click', function () {
-        sendCommand('prev');
-      });
-
-      // Seek back 5s (nudge)
-      document.getElementById('btn-seek-back').addEventListener('click', function () {
-        sendCommand('seek', { offset: -5 });
-      });
-      document.getElementById('btn-seek-fwd').addEventListener('click', function () {
-        sendCommand('seek', { offset: 5 });
-      });
-
-      updateTransportDisplay();
-      updateNudgeButtons();
-
-      // Tap Tempo
-      document.getElementById('tap-tempo-btn').addEventListener('click', function () {
-        sendCommand('tap_tempo');
-      });
-
-      // EDM
-      document.getElementById('btn-edm').addEventListener('click', function () {
-        navigateTo('edm');
-      });
-
-      // Setlist
-      document.getElementById('btn-setlist').addEventListener('click', function () {
-        navigateTo('setlist');
-      });
-
-      // MIXER
-      document.getElementById('btn-mixer').addEventListener('click', function () {
-        navigateTo('mixer');
-      });
-
-      // Battery
-      document.getElementById('btn-battery').addEventListener('click', function () {
-        navigateTo('battery');
-      });
-
-      // MUTE
       document.getElementById('btn-mute').addEventListener('click', function () {
         cycleMute();
       });
 
-      // TUNER
+      document.getElementById('btn-start').addEventListener('click', function () {
+        sendCommand('start_song');
+        var btn = this;
+        btn.style.background = '#0a2a0a';
+        setTimeout(function () { btn.style.background = ''; }, 200);
+      });
+
+      document.getElementById('tap-tempo-btn').addEventListener('click', function () {
+        sendCommand('tap_tempo');
+      });
+
+      document.getElementById('btn-edm').addEventListener('click', function () {
+        navigateTo('edm');
+      });
+
+      document.getElementById('btn-setlist').addEventListener('click', function () {
+        navigateTo('setlist');
+      });
+
+      document.getElementById('btn-mixer').addEventListener('click', function () {
+        navigateTo('mixer');
+      });
+
+      document.getElementById('btn-looper').addEventListener('click', function () {
+        navigateTo('looper');
+      });
+
+      document.getElementById('btn-battery').addEventListener('click', function () {
+        navigateTo('battery');
+      });
+
       document.getElementById('btn-tuner').addEventListener('click', function () {
         navigateTo('tuner');
       });
 
-      // GTR FX
       document.getElementById('btn-gtr-fx').addEventListener('click', function () {
         navigateTo('gtr-fx');
       });
 
-      // GTR AMP
       document.getElementById('btn-gtr-amp').addEventListener('click', function () {
         navigateTo('gtr-amp');
       });
 
-      // KEYS — short press toggle, long press -> VST settings (future)
+      document.getElementById('btn-requests').addEventListener('click', function () {
+        navigateTo('requests');
+      });
+
       var keysBtn = document.getElementById('btn-keys');
       var keysTimer = null;
       keysBtn.addEventListener('pointerdown', function () {
@@ -527,23 +587,9 @@
         }
       });
 
-      // START
-      document.getElementById('btn-start').addEventListener('click', function () {
-        sendCommand('start_song');
-        var btn = this;
-        btn.style.background = '#0a2a0a';
-        setTimeout(function () { btn.style.background = ''; }, 200);
-      });
-
-      // REQUESTS
-      document.getElementById('btn-requests').addEventListener('click', function () {
-        navigateTo('requests');
-      });
-
-      // Bumper Music (double tap)
-      const bumperBtn = document.getElementById('btn-bumper');
+      var bumperBtn = document.getElementById('btn-bumper');
       createDoubleTapHandler(bumperBtn,
-        function () { /* first tap — do nothing, wait for second */ },
+        function () {},
         function () {
           sendCommand('bumper_toggle');
           bumperBtn.style.borderColor = '#ff8800';
@@ -555,17 +601,14 @@
         }
       );
 
-      // Settings
       document.getElementById('btn-settings').addEventListener('click', function () {
         navigateTo('settings');
       });
 
-      // Pre-show checklist
       document.getElementById('btn-checklist').addEventListener('click', function () {
         navigateTo('checklist');
       });
 
-      // Teleprompter (lyrics backup)
       document.getElementById('btn-teleprompter').addEventListener('click', function () {
         navigateTo('teleprompter');
       });
@@ -573,29 +616,174 @@
 
     onState: function (msg) {
       if (msg.bpm) {
-        document.getElementById('bpm-display').textContent = Math.round(msg.bpm);
+        var bpmEl = document.getElementById('transport-bpm');
+        if (bpmEl) bpmEl.textContent = '\u2669 ' + Math.round(msg.bpm);
       }
       if (msg.activeAmpPreset && msg.activeAmpPreset !== state._lastAmpFromServer) {
         state._lastAmpFromServer = msg.activeAmpPreset;
         state.activeAmpPreset = msg.activeAmpPreset;
         updateAmpHomeDisplay(msg.activeAmpPreset);
       }
-      updateTransportDisplay();
+      updateHomeTransport();
+      updateSectionDisplay();
+      updateHomeHeader();
+      updateSyncBadge(msg);
+      updateHomeKnobValues();
     },
   });
 
-  function updateTransportDisplay() {
-    var song = document.getElementById('trans-song');
-    var pos = document.getElementById('trans-pos');
-    var btn = document.getElementById('btn-play');
-    if (song) song.textContent = state.activeSong || 'No song loaded';
-    if (pos) {
+  function updateHomeTransport() {
+    var bpm = document.getElementById('transport-bpm');
+    var barEl = document.getElementById('transport-bar-num');
+    var playEl = document.getElementById('transport-play-state');
+    if (bpm) bpm.textContent = '\u2669 ' + Math.round(state.tempo || 120);
+    if (barEl) {
       var bar = state.tempo > 0 ? Math.floor((state.position || 0) * state.tempo / 240) + 1 : 1;
-      pos.textContent = 'Bar ' + bar + ' \u00B7 ' + formatTime(state.position) + ' / ' + formatTime(state.duration);
+      barEl.textContent = 'BAR ' + bar;
     }
-    if (btn) {
-      btn.textContent = state.playing ? '\u23F8 PAUSE' : '\u25B6 PLAY';
-      btn.className = 'trans-btn trans-play' + (state.playing ? ' playing' : '');
+    if (playEl) {
+      if (state.playing) {
+        playEl.textContent = '\u25B6';
+        playEl.style.color = '#2ecc71';
+      } else {
+        playEl.textContent = '\u23F8';
+        playEl.style.color = '#f1c40f';
+      }
+    }
+  }
+
+  function updateHomeHeader() {
+    var song = document.getElementById('song-header-title');
+    var meta = document.getElementById('song-header-meta');
+    if (song) song.textContent = state.activeSong || 'No song loaded';
+    if (meta) {
+      var artist = state.songArtist || '';
+      var key = state.songKey || '';
+      meta.textContent = artist ? (artist + (key ? '  \u00B7  ' + key : '')) : '';
+    }
+  }
+
+  function updateSectionDisplay() {
+    var container = document.getElementById('section-display');
+    if (!container) return;
+
+    var sections = state.sections || [];
+    var pos = state.position || 0;
+
+    var sectionName = document.getElementById('section-current');
+    var progressFill = document.getElementById('section-progress-fill');
+    var progressTime = document.getElementById('section-progress-time');
+    var nextEl = document.getElementById('section-next');
+
+    if (!sections.length || pos === 0) {
+      if (sectionName) sectionName.textContent = '--';
+      if (progressFill) progressFill.style.width = '0%';
+      if (progressTime) progressTime.textContent = '--';
+      if (nextEl) nextEl.textContent = '';
+      return;
+    }
+
+    var currentIdx = -1;
+    for (var i = 0; i < sections.length; i++) {
+      if (sections[i].time <= pos) currentIdx = i;
+    }
+
+    if (currentIdx < 0) {
+      if (sectionName) sectionName.textContent = '--';
+      if (progressFill) progressFill.style.width = '0%';
+      if (progressTime) progressTime.textContent = '--';
+      if (nextEl) nextEl.textContent = '';
+      return;
+    }
+
+    var section = sections[currentIdx];
+    var nextSection = sections[currentIdx + 1] || null;
+    var sectionStart = section.time;
+    var sectionEnd = nextSection ? nextSection.time : (sectionStart + 30);
+    var sectionDuration = sectionEnd - sectionStart;
+    var progressInSection = pos - sectionStart;
+    var pct = Math.min(100, Math.max(0, (progressInSection / sectionDuration) * 100));
+    var remaining = Math.max(0, sectionEnd - pos);
+
+    if (sectionName) sectionName.textContent = section.name || ('Section ' + (currentIdx + 1));
+    if (progressFill) {
+      progressFill.style.width = pct + '%';
+      if (pct >= 85) {
+        progressFill.style.background = '#e74c3c';
+      } else if (pct >= 50) {
+        progressFill.style.background = '#f1c40f';
+      } else {
+        progressFill.style.background = '#2ecc71';
+      }
+    }
+    if (progressTime) progressTime.textContent = formatTime(remaining);
+
+    if (nextEl) {
+      if (nextSection) {
+        var barsRemaining = remaining / (60 / (state.tempo || 120)) * 4;
+        var blinkClass = barsRemaining < 4 ? ' blink-next' : '';
+        nextEl.innerHTML = '<span class="next-label">\u2192 Next:' + blinkClass + '</span> <span class="next-name' + blinkClass + '">' + escapeHtml(nextSection.name) + '</span>';
+      } else {
+        nextEl.textContent = '';
+      }
+    }
+  }
+
+  function updateHomeKnobValues() {
+    var vols = state.trackVolumes || {};
+    var names = state.trackNames || {};
+
+    function findTrack(patterns) {
+      for (var key in names) {
+        var name = (names[key] || '').toLowerCase();
+        for (var i = 0; i < patterns.length; i++) {
+          if (name.indexOf(patterns[i]) >= 0) return parseInt(key);
+        }
+      }
+      return null;
+    }
+
+    var voxTrack = findTrack(['vox', 'vocal', 'voice', 'voc']) || 7;
+    var gtrTrack = findTrack(['gtr', 'guitar', 'git']) || 6;
+    var bassTrack = findTrack(['bass']) || 2;
+
+    function fmtVal(trackNum) {
+      var v = vols[trackNum] || vols[String(trackNum)];
+      if (v === undefined || v === null) return '';
+      if (typeof v === 'number' && v <= 0) return '';
+      return formatDB(v);
+    }
+
+    setKnobLabels({
+      1: { name: 'VOX', value: fmtVal(voxTrack), color: '#1abc9c' },
+      2: { name: 'GTR', value: fmtVal(gtrTrack), color: '#ff8800' },
+      3: { name: 'BASS', value: fmtVal(bassTrack), color: '#3399ff' },
+      4: { name: 'REV MST', value: '', color: '#9b59b6' },
+    });
+  }
+
+  function updateSyncBadge(msg) {
+    var dot = document.getElementById('now-playing-sync');
+    var ls = msg.lyricSync;
+    if (ls && ls.totalLines > 0) {
+      dot.style.display = '';
+      var pct = ls.annotatedPct || 0;
+      if (ls.ok && pct >= 95) {
+        dot.className = 'sync-dot sync-ok';
+      } else if (pct >= 70) {
+        dot.className = 'sync-dot sync-warn';
+      } else {
+        dot.className = 'sync-dot sync-error';
+      }
+      if (ls.warnings && ls.warnings.length) {
+        dot.title = ls.warnings.join('; ');
+      } else {
+        dot.title = pct + '% lyric timing coverage';
+      }
+      state._lyricSync = ls;
+    } else {
+      dot.style.display = 'none';
+      state._lyricSync = null;
     }
   }
 
@@ -604,14 +792,6 @@
     var m = Math.floor(secs / 60);
     var s = Math.floor(secs % 60);
     return m + ':' + (s < 10 ? '0' : '') + s;
-  }
-
-  function updateNudgeButtons() {
-    var enabled = getSetting('nudgeControls', false);
-    var back = document.getElementById('btn-seek-back');
-    var fwd = document.getElementById('btn-seek-fwd');
-    if (back) back.style.display = enabled ? '' : 'none';
-    if (fwd) fwd.style.display = enabled ? '' : 'none';
   }
 
   // ─── KEYS Toggle ────────────────────────────────────
@@ -720,6 +900,13 @@
     onState: function (msg) {
       if (msg.mixerValues) {
         updateEDMKnobValues(msg.mixerValues);
+        var mv = msg.mixerValues;
+        setKnobLabels({
+          1: { name: 'FILTER', value: mv.filter !== undefined ? Math.round(mv.filter * 100) + '%' : '--', color: '#3498db' },
+          2: { name: 'RES',    value: mv.res !== undefined ? Math.round(mv.res * 100) + '%' : '--',    color: '#9b59b6' },
+          3: { name: 'REV',    value: mv.rev !== undefined ? Math.round(mv.rev * 100) + '%' : '--',    color: '#1abc9c' },
+          4: { name: 'DELAY',  value: mv.delay !== undefined ? Math.round(mv.delay * 100) + '%' : '--', color: '#e67e22' },
+        });
       }
     },
   });
@@ -888,6 +1075,12 @@
         Object.keys(vals).forEach(function (id) {
           var el = document.getElementById('fx-' + id);
           if (el) el.textContent = vals[id];
+        });
+        setKnobLabels({
+          1: { name: 'DELAY',  value: vals['delay-time'], color: '#1abc9c' },
+          2: { name: 'FEEDBK', value: vals['feedback'],   color: '#e74c3c' },
+          3: { name: 'MOD RT', value: vals['mod-rate'],   color: '#9b59b6' },
+          4: { name: 'MOD DP', value: vals['mod-depth'],  color: '#f1c40f' },
         });
       }
     },
@@ -1271,7 +1464,6 @@
           setSetting('nudgeControls', !current);
           this.textContent = !current ? 'ON' : 'OFF';
           this.className = 'value ' + (!current ? 'ok' : '');
-          updateNudgeButtons();
         });
       }
     },
@@ -1519,10 +1711,18 @@
   }
 
   var gtrAmpPresets = [
-    { name: 'BE',       type: 'drive', label: 'DRIVE', color: '#e74c3c' },
-    { name: 'SSS',      type: 'clean', label: 'CLEAN', color: '#3399ff' },
-    { name: 'Acoustic', type: 'acoustic', label: 'ACOUSTIC', color: '#2ecc71' },
+    { name: 'OSD',     label: 'DRIVE',     color: '#e67e22' },
+    { name: 'SSS',     label: 'CLEAN',     color: '#3498db' },
+    { name: 'SSS_CLN', label: 'ULTRA CLN', color: '#85c1e9' },
+    { name: 'BE',      label: 'CRUNCH',    color: '#e74c3c' },
+    { name: 'BE_CLN',  label: 'EDGE',      color: '#f1948a' },
+    { name: 'TRLX',    label: 'LEAD',      color: '#9b59b6' },
+    { name: 'TWD',     label: 'TWEED',     color: '#f39c12' },
   ];
+
+  function formatPresetName(name) {
+    return name.replace(/_/g, ' ');
+  }
 
   function getAmpColor(presetName) {
     for (var i = 0; i < gtrAmpPresets.length; i++) {
@@ -1543,10 +1743,11 @@
     var btn = document.getElementById('btn-gtr-amp');
     var dot = document.getElementById('amp-dot');
     var color = getAmpColor(preset);
+    var displayName = formatPresetName(preset);
     if (btn) btn.style.borderColor = color;
     if (dot) dot.style.background = color;
     if (sub) {
-      sub.innerHTML = '<span class="amp-dot" id="amp-dot" style="background:' + color + ';"></span> ' + preset + ' <span class="amp-badge" style="color:' + color + ';">' + getAmpBadge(preset) + '</span>';
+      sub.innerHTML = '<span class="amp-dot" id="amp-dot" style="background:' + color + ';"></span> ' + displayName + ' <span class="amp-badge" style="color:' + color + ';">' + getAmpBadge(preset) + '</span>';
       sub.id = 'gtr-amp-sub';
     }
     // Confirmation flash on home button
@@ -1573,7 +1774,7 @@
         var active = p.name === state.activeAmpPreset ? ' active' : '';
         html +=
           '<div class="gtr-amp-preset' + active + '" data-preset="' + p.name + '" style="border-color: ' + p.color + ';">' +
-            '<div class="preset-name" style="color: ' + p.color + ';">' + p.name + '</div>' +
+            '<div class="preset-name" style="color: ' + p.color + ';">' + formatPresetName(p.name) + '</div>' +
             '<div class="preset-badge" style="color: ' + p.color + ';">' + (p.label || '--') + '</div>' +
             '<div class="preset-confirm" style="background:' + p.color + ';">\u2713</div>' +
           '</div>';
@@ -1950,6 +2151,193 @@
       }
     },
   });
+
+  // ════════════════════════════════════════════════════════
+  // ─── PAGE: MOBIUS LOOPER ─────────────────────────────
+  // ════════════════════════════════════════════════════════
+
+  registerPage('looper', {
+    render: function(container) {
+      var tracksHtml = '';
+      for (var i = 0; i < 4; i++) {
+        var track = (state.loopStates && state.loopStates[i]) || { state: 'Empty' };
+        var st = track.state || 'Empty';
+        var cls = st.toLowerCase();
+        tracksHtml +=
+          '<div class="looper-track">' +
+            '<span class="looper-track-num">Track ' + (i + 1) + '</span>' +
+            '<span class="looper-track-indicator ' + cls + '"></span>' +
+            '<span class="looper-track-state">' + st + '</span>' +
+          '</div>';
+      }
+      container.innerHTML =
+        '<div class="looper-header">' +
+          '<h2>LOOPER</h2>' +
+          '<button class="looper-return" id="looper-return">← Home</button>' +
+        '</div>' +
+        '<div class="looper-btn-grid">' +
+          '<button class="looper-btn looper-record" id="looper-record">● RECORD</button>' +
+          '<button class="looper-btn looper-play" id="looper-play">▶ PLAY</button>' +
+          '<button class="looper-btn looper-overdub" id="looper-overdub">◉ OVERDUB</button>' +
+          '<button class="looper-btn looper-mute" id="looper-mute">■ STOP</button>' +
+          '<button class="looper-btn looper-undo" id="looper-undo">↩ UNDO</button>' +
+          '<button class="looper-btn looper-reset" id="looper-reset">⎚ RESET</button>' +
+          '<button class="looper-btn looper-multiply" id="looper-multiply">× MULTIPLY</button>' +
+          '<button class="looper-btn looper-mute" id="looper-mute2">M MUTE</button>' +
+        '</div>' +
+        '<div class="looper-tracks">' +
+          '<div class="looper-tracks-label">Loop States</div>' +
+          tracksHtml +
+        '</div>';
+    },
+
+    onActivate: function(container) {
+      setKnobLabels({
+        1: { name: 'REC', value: 'CC 20', color: '#e74c3c' },
+        2: { name: 'OVDB', value: 'CC 22', color: '#3399ff' },
+        3: { name: 'PLAY', value: 'CC 21', color: '#2ecc71' },
+        4: { name: 'STOP', value: 'CC 24', color: '#999999' },
+      });
+
+      document.getElementById('looper-return').addEventListener('click', function() {
+        navigateTo('home');
+      });
+
+      document.getElementById('looper-record').addEventListener('click', function() {
+        sendCommand('mobiusRecord');
+        flashBtn(this);
+      });
+
+      document.getElementById('looper-play').addEventListener('click', function() {
+        sendCommand('mobiusPlay');
+        flashBtn(this);
+      });
+
+      document.getElementById('looper-overdub').addEventListener('click', function() {
+        sendCommand('mobiusOverdub');
+        flashBtn(this);
+      });
+
+      document.getElementById('looper-mute').addEventListener('click', function() {
+        sendCommand('mobiusMute');
+        flashBtn(this);
+      });
+
+      document.getElementById('looper-mute2').addEventListener('click', function() {
+        sendCommand('mobiusMute');
+        flashBtn(this);
+      });
+
+      document.getElementById('looper-undo').addEventListener('click', function() {
+        sendCommand('mobiusAllUndo');
+        flashBtn(this);
+      });
+
+      document.getElementById('looper-multiply').addEventListener('click', function() {
+        sendCommand('mobiusMultiply');
+        flashBtn(this);
+      });
+
+      // RESET with long-press confirm
+      var resetBtn = document.getElementById('looper-reset');
+      var resetTimer = null;
+      var resetDialog = null;
+
+      function showResetConfirm() {
+        resetDialog = document.createElement('div');
+        resetDialog.className = 'looper-reset-overlay';
+        resetDialog.innerHTML =
+          '<div class="looper-reset-dialog">' +
+            '<h3>Reset All Loops?</h3>' +
+            '<p>This will clear every track.</p>' +
+            '<div class="looper-reset-dialog-btns">' +
+              '<button id="looper-reset-cancel">Cancel</button>' +
+              '<button class="looper-reset-confirm" id="looper-reset-confirm">RESET</button>' +
+            '</div>' +
+          '</div>';
+        document.body.appendChild(resetDialog);
+
+        document.getElementById('looper-reset-cancel').addEventListener('click', function() {
+          document.body.removeChild(resetDialog);
+          resetDialog = null;
+        });
+
+        document.getElementById('looper-reset-confirm').addEventListener('click', function() {
+          document.body.removeChild(resetDialog);
+          resetDialog = null;
+          sendCommand('mobiusAllReset');
+          flashBtn(resetBtn);
+        });
+      }
+
+      resetBtn.addEventListener('pointerdown', function() {
+        resetTimer = setTimeout(function() {
+          resetTimer = null;
+          showResetConfirm();
+        }, 600);
+      });
+
+      resetBtn.addEventListener('pointerup', function() {
+        if (resetTimer) {
+          clearTimeout(resetTimer);
+          resetTimer = null;
+          sendCommand('mobiusAllReset');
+          flashBtn(resetBtn);
+        }
+      });
+
+      resetBtn.addEventListener('pointerleave', function() {
+        if (resetTimer) {
+          clearTimeout(resetTimer);
+          resetTimer = null;
+        }
+      });
+
+      // Restore active states from state
+      if (state.loopStates && state.loopStates.length) {
+        updateLooperTrackDisplay();
+      }
+    },
+
+    onState: function(msg) {
+      if (msg.loopStates) {
+        state.loopStates = msg.loopStates;
+        updateLooperTrackDisplay();
+      }
+    },
+
+    onDeactivate: function() {
+      // Cleanup handled by navigateTo
+    },
+  });
+
+  function flashBtn(el) {
+    el.classList.add('confirm-flash');
+    setTimeout(function() {
+      el.classList.remove('confirm-flash');
+    }, 300);
+  }
+
+  function updateLooperTrackDisplay() {
+    var trackEls = document.querySelectorAll('.looper-track');
+    if (!trackEls || !trackEls.length) return;
+    for (var i = 0; i < 4; i++) {
+      var track = (state.loopStates && state.loopStates[i]) || { state: 'Empty' };
+      var st = track.state || 'Empty';
+      var cls = st.toLowerCase();
+      var el = trackEls[i];
+      if (el) {
+        var indicator = el.querySelector('.looper-track-indicator');
+        var stateEl = el.querySelector('.looper-track-state');
+        if (indicator) {
+          indicator.className = 'looper-track-indicator ' + cls;
+        }
+        if (stateEl) {
+          stateEl.textContent = st;
+        }
+      }
+    }
+  }
 
   function loadAndRender() {
     fetchRequests(function(err) {
