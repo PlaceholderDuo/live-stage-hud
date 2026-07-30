@@ -63,6 +63,7 @@
   var lastBeat = 0;
   var flashTimeout = null;
   var loadingEl = null;
+  var syncWarningEl = null;
 
   // ═══════════════════════════════════════════════════════════
   // FIT HUD — Scale everything to fit the browser window
@@ -214,17 +215,28 @@
       }
 
       var barAnnot = null;
+      var timeAnnot = null;
       var content = raw;
-      var barMatch = raw.match(/^@bar\s*=\s*(\d+)\s*/i);
+
+      // Extract @time=N (preferred — sub-second precision, no BPM dependency)
+      var timeMatch = raw.match(/@time\s*=\s*([\d]+\.?\d*)\s*/i);
+      if (timeMatch) {
+        timeAnnot = parseFloat(timeMatch[1]);
+        content = raw.replace(/@time\s*=\s*[\d]+\.?\d*\s*/i, "");
+      }
+
+      // Extract @bar=N (legacy fallback — requires BPM for conversion)
+      var barMatch = raw.match(/@bar\s*=\s*(\d+)\s*/i);
       if (barMatch) {
         barAnnot = parseInt(barMatch[1], 10);
-        content = raw.substring(barMatch[0].length);
+        content = raw.replace(/@bar\s*=\s*\d+\s*/i, "");
       }
 
       lines.push({
         pairs: parseLinePairs(content),
         type: currentType,
         label: currentLabel,
+        _time: timeAnnot,
         _bar: barAnnot,
         _duration: currentDuration,
       });
@@ -262,54 +274,155 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // LINE → BAR ESTIMATOR
+  // LINE → TIME ESTIMATOR (operates in seconds, no BPM needed for @time=N)
   // ═══════════════════════════════════════════════════════════
+  // Priority:
+  //   1. @time=N on line → use directly (LRCLIB ground truth)
+  //   2. @bar=N on line → convert to time using BPM from state
+  //   3. No annotation → distribute proportionally within section time spans
+  //
+  // Returns an array of time values (seconds) for each line.
 
-  function estimateLineBars(lines, sections) {
+  function estimateLineTimes(lines, sections, bpm) {
     if (!sections || sections.length === 0 || lines.length === 0) {
-      return lines.map(function (_, i) { return i + 1; });
+      return lines.map(function (_, i) { return i; }); // fallback: 1 second per line
     }
 
+    bpm = bpm || 120;
+    var beatsPerBar = 4;
+    var times = new Array(lines.length);
+
+    // Collect anchor lines that have @time=N annotations
+    var timeAnchors = [];
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i]._time !== null && lines[i]._time !== undefined) {
+        timeAnchors.push({ idx: i, time: lines[i]._time });
+      }
+    }
+
+    // If no @time anchors, try @bar anchors (convert to time using BPM)
+    if (timeAnchors.length === 0) {
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i]._bar !== null && lines[i]._bar !== undefined) {
+          var t = ((lines[i]._bar - 1) * beatsPerBar * 60) / bpm;
+          timeAnchors.push({ idx: i, time: t });
+        }
+      }
+    }
+
+    // Sort anchors by time (defense against out-of-order annotations)
+    timeAnchors.sort(function (a, b) { return a.time - b.time; });
+
+    // Compute section time ranges from bar positions
     var sectionRanges = [];
+    var totalTime = 0;
     for (var i = 0; i < sections.length; i++) {
-      var startBar = sections[i].bar;
-      var endBar = (i + 1 < sections.length) ? sections[i + 1].bar : startBar + 16;
-      sectionRanges.push({ startBar: startBar, endBar: endBar });
+      var startTime = ((sections[i].bar - 1) * beatsPerBar * 60) / bpm;
+      // If section has a 'time' field from server, use it directly
+      if (sections[i].time !== null && sections[i].time !== undefined) {
+        startTime = sections[i].time;
+      }
+      var endTime;
+      if (i + 1 < sections.length) {
+        var endBar = sections[i + 1].bar;
+        if (sections[i + 1].time !== null && sections[i + 1].time !== undefined) {
+          endTime = sections[i + 1].time;
+        } else {
+          endTime = ((endBar - 1) * beatsPerBar * 60) / bpm;
+        }
+      } else {
+        endTime = startTime + ((sections[i].bar ? 16 : 4) * beatsPerBar * 60) / bpm;
+      }
+      var span = endTime - startTime;
+      if (span <= 0) span = 8; // minimum 8 seconds per section
+      sectionRanges.push({ startTime: startTime, endTime: endTime, span: span });
+      totalTime += span;
     }
+    if (totalTime <= 0) totalTime = lines.length * 2; // fallback: 2 seconds per line
 
-    var linesPerSection = Math.max(1, Math.floor(lines.length / sectionRanges.length));
-    var bars = [];
+    if (timeAnchors.length > 0) {
+      // ── Anchor-based distribution ──
+      // Anchors are trust points. Distribute unannotated lines between them.
 
-    for (var j = 0; j < lines.length; j++) {
-      // Line has exact @bar annotation — use it
-      if (lines[j]._bar !== null && lines[j]._bar !== undefined) {
-        bars.push(lines[j]._bar);
-        continue;
+      for (var a = 0; a < timeAnchors.length; a++) {
+        times[timeAnchors[a].idx] = timeAnchors[a].time;
       }
 
-      var secIdx = Math.min(Math.floor(j / linesPerSection), sectionRanges.length - 1);
+      var unannotated = [];
+      for (var i = 0; i < lines.length; i++) {
+        if (times[i] === undefined) unannotated.push(i);
+      }
+      if (unannotated.length === 0) return times;
+
+      var anchorIdx = 0;
+      var gapLines = [];
+
+      function flushTimeGap(beforeTime, afterTime) {
+        if (gapLines.length === 0) return;
+        var span = afterTime - beforeTime;
+        if (span <= 0) span = gapLines.length * 2;
+        for (var gi = 0; gi < gapLines.length; gi++) {
+          var t = beforeTime + ((gi + 1) / (gapLines.length + 1)) * span;
+          times[gapLines[gi]] = Math.max(0.1, Math.round(t * 100) / 100);
+        }
+        gapLines = [];
+      }
+
+      for (var i = 0; i < unannotated.length; i++) {
+        var lineIdx = unannotated[i];
+        while (anchorIdx < timeAnchors.length && timeAnchors[anchorIdx].idx < lineIdx) {
+          var prevTime = anchorIdx > 0 ? timeAnchors[anchorIdx - 1].time : 0;
+          flushTimeGap(prevTime, timeAnchors[anchorIdx].time);
+          anchorIdx++;
+        }
+        gapLines.push(lineIdx);
+      }
+
+      var lastAnchorTime = timeAnchors.length > 0 ? timeAnchors[timeAnchors.length - 1].time : 0;
+      var afterLast = Math.max(lastAnchorTime + 8, totalTime);
+      flushTimeGap(lastAnchorTime, afterLast);
+
+      for (var i = 0; i < times.length; i++) {
+        if (times[i] === undefined) times[i] = Math.round((i * 2) * 100) / 100;
+      }
+      return times;
+    }
+
+    // ── No anchors at all: proportional by section time span ──
+    var linesPerSection = [];
+    var assigned = 0;
+    for (var i = 0; i < sectionRanges.length; i++) {
+      var count = Math.round((sectionRanges[i].span / totalTime) * lines.length);
+      linesPerSection.push(count);
+      assigned += count;
+    }
+
+    var diff = lines.length - assigned;
+    var sorted = sectionRanges.map(function (sr, idx) { return { idx: idx, span: sr.span }; });
+    sorted.sort(function (a, b) { return b.span - a.span; });
+    for (var d = 0; d < Math.abs(diff); d++) {
+      var target = sorted[d % sorted.length].idx;
+      if (diff > 0) linesPerSection[target]++;
+      else if (linesPerSection[target] > 0) linesPerSection[target]--;
+    }
+
+    var linePtr = 0;
+    for (var secIdx = 0; secIdx < sectionRanges.length; secIdx++) {
       var sec = sectionRanges[secIdx];
-      var secStart = secIdx * linesPerSection;
-      var secEnd = Math.min(secStart + linesPerSection, lines.length);
-
-      // Count un-annotated lines before this one in the same section
-      var localIdx = 0;
-      for (var k = secStart; k < j; k++) {
-        if (lines[k] && (lines[k]._bar === null || lines[k]._bar === undefined)) localIdx++;
+      var count = Math.max(1, linesPerSection[secIdx]);
+      for (var li = 0; li < count && linePtr < lines.length; li++) {
+        var t = sec.startTime + (li / count) * sec.span;
+        times[linePtr] = Math.max(0.1, Math.round(t * 100) / 100);
+        linePtr++;
       }
-      // Count total un-annotated lines in this section
-      var totalLocal = 0;
-      for (var k = secStart; k < secEnd; k++) {
-        if (lines[k] && (lines[k]._bar === null || lines[k]._bar === undefined)) totalLocal++;
-      }
-      totalLocal = Math.max(1, totalLocal);
-
-      var barsInSection = sec.endBar - sec.startBar;
-      var bar = sec.startBar + Math.floor((localIdx / totalLocal) * barsInSection);
-      bars.push(Math.max(1, bar));
     }
 
-    return bars;
+    while (linePtr < lines.length) {
+      times[linePtr] = Math.round((totalTime + linePtr * 2) * 100) / 100;
+      linePtr++;
+    }
+
+    return times;
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -376,37 +489,49 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // PREPARE SONG LINES (Fallback healing for legacy data)
+  // PREPARE SONG LINES — compute _time for every line
   // ═══════════════════════════════════════════════════════════
-  // Server now sends precomputed sections with accurate types,
-  // labels, and tokens. This function is a safety net for older
-  // server data that lacks the `token` field.
+  // Priority:
+  //   1. @time=N on line → use directly (ground truth, BPM-independent)
+  //   2. @bar=N on line → convert to time using state BPM
+  //   3. Neither → estimateTimeLines distributes proportionally
+  //
+  // After this, every line has a `_time` field used by renderRollingEngine.
 
-  function prepareSongLines(lines, sections) {
+  function prepareSongLines(lines, sections, bpm) {
     if (!lines || lines.length === 0) return;
 
-    // Compute bar estimates only for lines without exact @bar annotations
-    var barEstimates = estimateLineBars(lines, sections || []);
+    // Compute time estimates for lines without @time anchor
+    var timeEstimates = estimateLineTimes(lines, sections, bpm);
+
     for (var i = 0; i < lines.length; i++) {
+      // Preserve existing @time=N values
+      if (lines[i]._time === null || lines[i]._time === undefined) {
+        lines[i]._time = timeEstimates[i];
+      }
+      // Store bar for backward compat (section label healing uses it)
       if (lines[i]._bar === null || lines[i]._bar === undefined) {
-        lines[i]._bar = barEstimates[i];
+        // Derive bar from time for conductor display
+        lines[i]._bar = Math.floor(lines[i]._time * bpm / (4 * 60)) + 1;
       }
     }
 
     // Heuristically map server sections to ChordPro-parsed types/labels
-    // Only if server didn't send proper tokens
+    // Only if server didn't send proper tokens (legacy healing)
+    if (!sections) return;
     var needsHealing = false;
-    for (var j = 0; j < (sections || []).length; j++) {
+    for (var j = 0; j < sections.length; j++) {
       if (!sections[j].token) { needsHealing = true; break; }
     }
-    if (!needsHealing || !sections) return;
+    if (!needsHealing) return;
 
     for (var j = 0; j < sections.length; j++) {
       var sec = sections[j];
       var bestLine = null;
       var minDiff = Infinity;
+      var secTime = sec.time || ((sec.bar - 1) * 4 * 60) / (bpm || 120);
       for (var k = 0; k < lines.length; k++) {
-        var diff = Math.abs(lines[k]._bar - sec.bar);
+        var diff = Math.abs((lines[k]._time || 0) - secTime);
         if (diff < minDiff) {
           minDiff = diff;
           bestLine = lines[k];
@@ -423,14 +548,16 @@
   // 3-LINE ROLLING ENGINE
   // ═══════════════════════════════════════════════════════════
 
-  function renderRollingEngine(bar, lines, sections) {
+  function renderRollingEngine(position, lines, sections, bpm) {
     if (!lines || lines.length === 0) return;
 
-    // Find current line by bar position using _bar annotations
+    // Find current line by time position using _time annotations
+    // Each line now has _time (seconds) — either from @time=N or estimated
     var currentIdx = 0;
     for (var i = 0; i < lines.length; i++) {
-      if (lines[i]._bar !== null && lines[i]._bar !== undefined) {
-        if (lines[i]._bar <= bar) currentIdx = i;
+      var lineTime = lines[i]._time;
+      if (lineTime !== null && lineTime !== undefined && lineTime <= position) {
+        currentIdx = i;
       }
     }
 
@@ -441,8 +568,8 @@
     for (var i = currentIdx; i < lines.length && (i === currentIdx || lines[i].type === lines[currentIdx].type); i++) {
       if (lines[i].type === "solo" || (lines[i]._duration && lines[i].type === "solo")) {
         inSolo = true;
-        var soloStart = lines[i]._bar || 1;
-        soloRemaining = (lines[i]._duration || 16) - (bar - soloStart);
+        var soloStartTime = lines[i]._time || 0;
+        soloRemaining = (lines[i]._duration || 16) * (4 * 60) / (bpm || 120) - (position - soloStartTime);
         break;
       }
     }
@@ -800,6 +927,8 @@
   // Scale HUD to fit the window
   fitHud();
 
+  syncWarningEl = $("syncWarning");
+
   // ── Heartbeat: detect stale state updates ──
   var lastStateTime = 0;
   var heartbeatInterval = setInterval(function () {
@@ -846,6 +975,14 @@
         lastSectionIdx = -1;
       }
 
+      // Sync health warning
+      if (syncWarningEl && s.lyricSync && !s.lyricSync.ok && s.lyricSync.warnings) {
+        syncWarningEl.style.display = "block";
+        syncWarningEl.textContent = "SYNC: " + s.lyricSync.warnings.join(" | ");
+      } else if (syncWarningEl) {
+        syncWarningEl.style.display = "none";
+      }
+
       // Conductor Counter & Metronome
       updateConductor(s.position || 0, s.bpm || 0);
 
@@ -872,20 +1009,21 @@
 
       detectSectionChange(s.sections, barCalc);
 
-      // Debug overlay — always show current parsing state (AFTER barCalc)
+      // Debug overlay
       var _d = document.getElementById("hudDebug");
       if (_d) {
         var _word0 = parsedLines.length > 0 && parsedLines[0].pairs.length > 0 ? (parsedLines[0].pairs[0].word||"-").substring(0,30) : "-";
-        _d.textContent = "song=" + (s.songId||"-") + " lines=" + parsedLines.length + " sec=" + (s.sections?s.sections.length:0) + " bar=" + barCalc + " prep=" + lyricEngine._prepared + " w0='" + _word0 + "'";
+        var _t0 = parsedLines.length > 0 && parsedLines[0]._time !== undefined ? parsedLines[0]._time.toFixed(1) : "-";
+        _d.textContent = "song=" + (s.songId||"-") + " lines=" + parsedLines.length + " sec=" + (s.sections?s.sections.length:0) + " t=" + (s.position||0).toFixed(1) + " t0=" + _t0 + " prep=" + lyricEngine._prepared + " w0='" + _word0 + "'";
       }
 
-      // 6-Line Engine Renderer — advance lines by bar position (@bar=N annotations)
+      // 6-Line Engine Renderer — uses _time (seconds) for line selection
       if (parsedLines.length > 0 && s.sections && s.sections.length > 0) {
         if (!lyricEngine._prepared) {
           lyricEngine._prepared = true;
-          prepareSongLines(parsedLines, s.sections);
+          prepareSongLines(parsedLines, s.sections, s.bpm || 120);
         }
-        renderRollingEngine(barCalc, parsedLines, s.sections);
+        renderRollingEngine(s.position || 0, parsedLines, s.sections, s.bpm || 120);
       }
       } catch (e) {
         console.error("HUD ERROR:", e.message, e.stack);

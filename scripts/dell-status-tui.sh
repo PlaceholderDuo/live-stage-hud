@@ -47,13 +47,36 @@ inv_bar() {
 get_wifi() { iwgetid -r 2>/dev/null || iw dev 2>/dev/null | grep ssid | head -1 | awk '{print $2}' || echo "N/A"; }
 get_my_ip() { ip route get 1 2>/dev/null | grep -oP 'src \K\S+' | head -1 || echo "N/A"; }
 get_cpu_pct() {
+  local cache="/tmp/dell-cpu-cache"
+  local now=$(date +%s)
   local idle1 total1 idle2 total2
+
   read cpu user nice system idle iowait irq softirq steal guest < /proc/stat
   idle1=$idle; total1=$((user + nice + system + idle + iowait + irq + softirq + steal))
-  sleep 0.3
-  read cpu user nice system idle iowait irq softirq steal guest < /proc/stat
-  idle2=$idle; total2=$((user + nice + system + idle + iowait + irq + softirq + steal))
-  echo $(( 100 - ( 100 * (idle2 - idle1) / (total2 - total1) ) ))
+
+  # Use cached previous reading if fresh (<2s old), otherwise re-measure
+  if [ -f "$cache" ]; then
+    read prev_idle prev_total prev_ts < "$cache"
+    if [ $((now - prev_ts)) -lt 2 ]; then
+      idle2=$idle1; total2=$total1
+      idle1=$prev_idle; total1=$prev_total
+    else
+      sleep 0.3
+      read cpu user nice system idle iowait irq softirq steal guest < /proc/stat
+      idle2=$idle; total2=$((user + nice + system + idle + iowait + irq + softirq + steal))
+      echo "$idle1 $total1 $now" > "$cache"
+    fi
+  else
+    sleep 0.3
+    read cpu user nice system idle iowait irq softirq steal guest < /proc/stat
+    idle2=$idle; total2=$((user + nice + system + idle + iowait + irq + softirq + steal))
+    echo "$idle1 $total1 $now" > "$cache"
+  fi
+
+  local delta_idle=$((idle2 - idle1))
+  local delta_total=$((total2 - total1))
+  [ "$delta_total" -eq 0 ] && delta_total=1
+  echo $(( 100 - (100 * delta_idle / delta_total) ))
 }
 get_temp_c() {
   local t=$(cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -1 | awk '{printf "%.0f", $1/1000}')

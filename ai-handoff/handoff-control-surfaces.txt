@@ -1,0 +1,215 @@
+═══════════════════════════════════════════════════════════════
+HANDOFF: Control Surfaces — TUI Dashboard + iPhone Controller
+═══════════════════════════════════════════════════════════════
+Context from master session: Lyric sync architecture is complete.
+258/324 songs now use @time=N (sub-second precision, BPM-free).
+HUD renders in time domain. Verification script available.
+NOW: make both control surfaces (TUI + iPhone) integrate lyric
+sync health, and ensure the full system is tight.
+
+═══════════════════════════════════════════════════════════════
+THE REAL PROJECT MAP (3 projects, not 2)
+═══════════════════════════════════════════════════════════════
+
+  A) iPhoneLiveServer (port 3300)
+     ~/Music/iPhoneLiveServer/
+     → THE primary show management server
+     → TUI dashboard: scripts/tui.js (1379 lines)
+     → Singer queue, song library, setlists, auth, profanity
+     → Teleprompter page, band view, show control page
+     → start show server → runs scripts/start-show → launches TUI
+
+  B) Live Show Manager (port 3000)
+     ~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/
+     → REAPER bridge (OSC/MIDI), HUD teleprompter, bumper music
+     → State broadcast: /api/state, /api/sync-health, /api/clients
+     → Serves hud.html (Stage HUD) + iPhone controller pages
+
+  C) live-stage-hud (static web files served by LSM)
+     ~/Documents/projects/live-stage-hud/
+     → web/public/ — iPhone controller (index.html, controller.js/css)
+     → web/public/hud.html,hud.css,hud.js — Stage HUD (CANONICAL version)
+     → scripts/ — Dell auto-connect + status
+     → tui/showman.js — OLD TUI, user does NOT use this
+
+Data flow:
+  REAPER → Lua runner → bridge_state.json
+    → LSM server (:3000) polls → WebSocket broadcast
+    → TUI (:3300) polls /api/state from LSM
+    → HUD receives WebSocket state from LSM
+    → iPhone controller same WebSocket from LSM
+
+Song data:
+  ~/ReaperSongs/<Song>/{meta.json, song.chopro}
+  chopro lines: @time=36.00 @bar=19  [D]Well, she was an American girl
+
+═══════════════════════════════════════════════════════════════
+TUI DASHBOARD — scripts/tui.js (1379 lines) — WHAT EXISTS
+═══════════════════════════════════════════════════════════════
+
+This is a zero-dependency Node.js terminal dashboard using raw ANSI.
+Terminal set to raw mode, refreshes every 2 seconds.
+
+Display sections (shown in screenshot):
+  • Title bar: Mode ([LIVE]/[SETUP]), [REAPER], ONLINE, ● RUNNING
+  • Now Playing (left): song, artist, key, bar/BPM, position/duration,
+    playing state (● HUD PLAYING local)
+  • Queue (right): Tab-toggle Singers view or Setlist view
+    - Singers: list of queued singers, wait time estimates
+    - Setlist: band song queue with current/next/prev highlighting
+  • Stats bar: Singers #, Setlist size, Round counter, ETA,
+    Karaoke ON/OFF, ONLINE/OFFLINE, Dell status, current song
+  • URLs: iPhone, Stage HUD, Singer Queue, Band View IPs
+  • Actions bar: full keyboard shortcut reference
+  • Log panel: last ~150 timestamped events
+
+Keyboard controls (selected):
+  ← →   Switch panel focus (Now Playing / Queue)
+  Tab   Toggle Singers / Setlist in Queue panel
+  ↑ ↓   Navigate items
+  a     Search + add song
+  p     Promote singer to main queue
+  B     Kick/ban singer (confirm)
+  x     Remove item (confirm for singers)
+  c     Clear round (confirm)
+  n/b   Load next / previous song
+  Space Play / Stop / Start setlist
+  Enter "Play now" — promote to main queue
+  Shift+K Toggle karaoke ON/OFF
+  Shift+L Go LIVE (system optimize, activate Dell HUD)
+  m     Toggle bumper music
+  [ ]   Bumper volume -/+5%
+  E     Export setlist
+  I     Import setlist
+  ?     Settings (max songs, bumper vol, karaoke toggle)
+  w     WiFi info overlay
+  o     Toggle online/offline external sync
+  q     Quit (stops bumper, stops server, restores AWDL)
+
+Overlay modes: search picker, confirm dialog, WiFi info,
+setlist picker, settings, export name input.
+
+The TUI was built ~a month ago across 11 sessions (see BUILD_LOG.md).
+
+═══════════════════════════════════════════════════════════════
+WHAT NEEDS WORK
+═══════════════════════════════════════════════════════════════
+
+PRIORITY 1 — Lyric Sync Health in TUI
+──────────────────────────────────────
+The TUI's "Now Playing" panel shows song info but NOT sync health.
+Add to the Now Playing panel:
+
+A) Sync status line below position:
+   "Sync: ● 100% @time=N  24 lines"  (green dot)
+   "Sync: ◐  83% @bar=N   19 lines — BPM default, missing intro" (yellow)
+   "Sync: ○   0% ESTIMATED 28 lines — lyrics may be out of sync" (red)
+
+   Data source: LSM bridge /api/sync-health returns:
+   { currentSong, lyricSync: { ok, annotatedPct, totalLines, annotatedLines, warnings[] } }
+
+B) Sync warnings display: show the warnings array from lyricSync
+   under the sync line when present.
+
+C) In the "Setlist" queue view, add sync badges per song:
+   Color dot next to each song name: green (100% @time), yellow (80-99%), red (<80% or none)
+
+PRIORITY 2 — Pre-Show Checklist
+────────────────────────────────
+Add a pre-show health check (triggered by a new key, maybe Shift+P) that:
+  A) Polls /api/sync-health for current song
+  B) Runs verify-lyric-sync.js --json for all songs in the active setlist
+     (via child_process.exec on server side, exposed as /api/preflight on :3300)
+  C) Checks REAPER connection (bridge_state.json age from /api/state)
+  D) Checks both servers are running
+  E) Shows summary: "ALL CLEAR" (green) or "⚠ 3 ISSUES" (red) with list
+
+PRIORITY 3 — iPhone Controller Sync Badges
+───────────────────────────────────────────
+The iPhone controller serves at :3000 (served by LSM) using files from:
+  ~/Documents/projects/live-stage-hud/web/public/
+    index.html, controller.js, controller.css
+
+The WebSocket state broadcast now includes lyricSync.
+Add to the homepage (or queue page):
+
+A) Sync badge on the "Now Playing" display area
+   Small dot: green/yellow/red based on lyricSync.ok
+
+B) Setlist page: sync badges per song in the queue
+   Query server for per-song sync status
+
+C) If lyricSync.warnings has entries, show a subtle amber
+   indicator that can be tapped to expand
+
+PRIORITY 4 — Song Info Enhancement in TUI
+─────────────────────────────────────────
+The Now Playing panel could show more useful info:
+  A) Current section name (e.g., "VERSE 2") — from state.sections
+  B) Time remaining in current section
+  C) Section progress bar (proportional to section duration)
+  D) "Next: Chorus" preview
+
+Data is already in the /api/state broadcast from LSM:
+  sections: [{ bar, time, text, type, token }]
+
+PRIORITY 5 — Clean Up Old TUI
+──────────────────────────────
+  tui/showman.js in live-stage-hud is the OLD tunnel/QR manager.
+  The user does NOT use this. It's confusing to have two.
+  Action: Delete it and remove any references to it.
+
+═══════════════════════════════════════════════════════════════
+KEY FILES
+═══════════════════════════════════════════════════════════════
+
+PRIMARY (iPhoneLiveServer):
+  ~/Music/iPhoneLiveServer/scripts/tui.js           ← TUI dashboard (main work area)
+  ~/Music/iPhoneLiveServer/scripts/start-show        ← Entry point launcher
+  ~/Music/iPhoneLiveServer/server/index.js           ← Express server :3300
+  ~/Music/iPhoneLiveServer/server/api/queue.js       ← Queue engine
+  ~/Music/iPhoneLiveServer/server/api/songs.js       ← Song library
+  ~/Music/iPhoneLiveServer/BUILD_LOG.md              ← Build history (914 lines)
+
+SECONDARY (Live Show Manager):
+  ~/L/S/REAPER/Scripts/Live Show Manager/web/server.js  ← LSM bridge :3000
+  ~/L/S/REAPER/Scripts/Live Show Manager/web/tools/verify-lyric-sync.js
+  ~/L/S/REAPER/Scripts/Live Show Manager/web/tools/migrate-to-atime.js
+
+TERTIARY (live-stage-hud):
+  ~/Documents/projects/live-stage-hud/web/public/hud.js   ← Stage HUD
+  ~/Documents/projects/live-stage-hud/web/public/controller.js  ← iPhone
+  ~/Documents/projects/live-stage-hud/tui/showman.js      ← OLD TUI (DELETE)
+  ~/Documents/projects/live-stage-hud/IPHONE-CONTROLLER-SPEC.md
+  ~/Documents/projects/live-stage-hud/STAGE-HUD-SPEC.md
+
+═══════════════════════════════════════════════════════════════
+USEFUL COMMANDS
+═══════════════════════════════════════════════════════════════
+
+# Start everything (launches both servers + TUI)
+start show server
+
+# Stop everything
+stop show server
+
+# TUI only (if servers already running)
+node ~/Music/iPhoneLiveServer/scripts/tui.js
+
+# Check sync health
+curl -s http://localhost:3000/api/sync-health | python3 -m json.tool
+
+# Check REAPER state
+curl -s http://localhost:3000/api/state | python3 -m json.tool
+
+# Verify lyric sync
+node ~/Library/Application\ Support/REAPER/Scripts/Live\ Show\ Manager/web/tools/verify-lyric-sync.js
+
+# Verify only problem songs
+node ~/Library/Application\ Support/REAPER/Scripts/Live\ Show\ Manager/web/tools/verify-lyric-sync.js --errors-only
+
+# Start LSM server directly (debug)
+node ~/Library/Application\ Support/REAPER/Scripts/Live\ Show\ Manager/web/server.js
+
+# Start iPhoneLiveServer directly (debug)
+node ~/Music/iPhoneLiveServer/server/index.js

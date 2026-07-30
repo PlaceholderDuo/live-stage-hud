@@ -47,6 +47,20 @@ html, body {
   50% { opacity: 0.6; }
 }
 
+/* ── Lyric Sync Warning Banner ── */
+#syncWarning {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  background: #cc8800;
+  color: #000;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-align: center;
+  padding: 0.4rem;
+  z-index: 199;
+  border-bottom: 2px solid #ffaa00;
+}
+
 /* ── Edge flash ── */
 #edgeFlashTop, #edgeFlashBottom {
   position: fixed;

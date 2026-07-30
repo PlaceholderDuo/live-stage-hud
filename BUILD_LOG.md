@@ -4,6 +4,13 @@
 **Device:** iPhone 7 (horizontal, behind Alesis V25 knobs)  
 **Started:** 2026-07-11  
 
+> ⚠ **2026-07-30: Project Map Clarification** — This project is ONE of THREE
+> in the Live Show System. The main show server is `~/Music/iPhoneLiveServer/`
+> (port 3300), launched via `start show server`. The `tui/showman.js` file
+> has been DELETED — it was an old tunnel/QR manager, superseded by the
+> full TUI at `~/Music/iPhoneLiveServer/scripts/tui.js` (1379 lines).
+> See `~/Library/.../Live Show Manager/web/` for the REAPER bridge (port 3000).
+
 ---
 
 ## 2026-07-11
@@ -1157,4 +1164,457 @@ Run: `node "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/t
 - LIGHTS page not implemented
 - Tuner not tested with actual guitar signal
 - Network dependency — no offline fallback if WiFi drops
+
+---
+
+## 2026-07-30
+
+### Session: Teleprompter Lyric Sync — Architecture, Verification, and @time=N Migration
+
+#### Problem
+
+The stage HUD teleprompter was showing lyrics out of sync with songs. Root cause:
+three consecutive lossy conversions (seconds→bars→lines) each introducing error.
+BPM defaults to 120 for 90% of songs. LRCLIB converts accurate timestamps to
+whole-bar integers using a guessed BPM, destroying sub-second precision. The
+`estimateLineBars()` fallback spread lines evenly across sections regardless of
+section bar span, showing verse lyrics during 18-bar instrumentals.
+
+#### Architecture Decision
+
+Instead of patching the bar-based pipeline, migrate to a **time-based format**
+(`@time=N` in seconds) that eliminates the BPM dependency entirely:
+
+| Format | Unit | Requires BPM? | Precision | Source |
+|--------|------|--------------|-----------|--------|
+| `@bar=N` | bars | Yes | Whole bars | Legacy |
+| `@time=N` | seconds | No | 10ms | LRCLIB / GP tempo track |
+
+The HUD compares `@time` against REAPER's `position` (seconds) directly — no
+bar conversion needed. Both formats coexist; `@time` preferred when available.
+
+#### Files Changed (9 files)
+
+**NEW: `web/tools/verify-lyric-sync.js` (564 lines)**
+- 10-point verification: BPM sanity, coverage (both @time and @bar), bar monotonicity,
+  range validity, first/last bar proximity, gap detection, section alignment,
+  duplicate detection, section count, annotation density
+- Dual-format detection: reports `@time=N (N lines)` vs `@bar=N (N lines)` 
+- ANSI-colored output with OK/WARN/ERR/No timing
+- `--errors-only`, `--missing`, `--json`, `--summary`, `--song "Name"` flags
+- Exit codes: 0=clean, 1=warnings, 2=errors (CI-friendly)
+- Current state: 324 songs, 3 OK, 35 warnings, 286 errors, 61 no timing
+  Format: 0 @time=N, 258 @bar=N only, 61 none
+
+**FIXED: `web/public/hud.js` — 3 major rewrites**
+
+`parseChordPro()` — dual format extraction:
+```
+Before: parsed only @bar=N → _bar field
+After:  parses both @time=N → _time AND @bar=N → _bar
+```
+
+`estimateLineBars()` → `estimateLineTimes()`:
+```
+Before: even distribution by section count (3 lines per section regardless of span)
+        An 18-bar intro with no lyrics got same lines as 16-bar verse.
+After:  Two strategies:
+        1. @time/@bar anchors → gap-fill between trust points
+        2. No anchors → proportional by section TIME span (weighted by duration)
+        All values in seconds, rounded to 2 decimal places.
+```
+
+`renderRollingEngine()`:
+```
+Before: received currentBar (integer), searched _bar ≤ currentBar
+After:  receives position (seconds), searches _time ≤ position
+        No BPM dependency when @time present. Solo detection uses time math.
+```
+
+`socket handler`:
+```
+Before: barCalc = floor(position * bpm / 240) + 1; renderRollingEngine(barCalc, ...)
+After:  prepareSongLines(lines, sections, bpm); renderRollingEngine(position, ...)
+        Each line now has _time populated from @time or estimated.
+```
+
+@bar regex fix: Removed `^` anchor so indented `@bar=N` (from lrc-to-bars
+preserving indentation) is correctly matched.
+
+**FIXED: `web/public/hud.html`** — Added `#syncWarning` div for orange banner.
+
+**FIXED: `web/public/hud.css`** — `#syncWarning` styles: orange background, z-index 199.
+
+**FIXED: `web/server.js`** — 4 changes:
+- New `state.lyricSync` field: `{ok, annotatedPct, totalLines, annotatedLines, warnings[]}`
+- Computed in both section-computation paths (poll loop + local playback)
+- `/api/sync-health` endpoint for TUI/iPhone
+- `extractLyricLines()` now parses both `@time=N` and `@bar=N`
+- Sync health counts either format as "annotated"
+
+**FIXED: `web/tools/lrc-to-bars.js`** — 3 improvements:
+- Writes `@time=N` (LRC timestamp, ground truth) + `@bar=N` (legacy fallback)
+- Title cleanup: strips "OFFICIAL ... TABS", "CHORDS (ver N)" before LRCLIB search
+- Early skip: checks for existing @time= before API call (saves 258 API requests)
+- Retry with cleaned title if original fails
+- Interactive listing: shows @time=N vs @bar=N counts separately
+
+**FIXED: `web/tools/gpif-to-chopro.js`** — Outputs `@time=N @bar=N` on every lyric line,
+computed from GP's tempo automation × bar position. Ground truth for GP-sourced tabs.
+
+**FIXED: `tui/showman.js`** — Sync health display:
+- `curl` to `/api/sync-health` on each refresh
+- Shows "Lyrics: OK (93% timed)" or "Lyrics: WARN — No @time=N"
+- Orange/Yellow ANSI for warnings
+
+**FIXED: `web/tools/ug-import.js`** — Duration estimate formula changed:
+- Old: `bar += Math.max(sec.lines.length * 4, 8)` per section
+- New: `bar += Math.max(sec.lines.length * 2, 16)` per section
+- Results in ~128 bars minimum for typical songs instead of ~25
+
+#### What Could Break
+
+1. **HUD estimateLineTimes()**: 61 songs previously showed wrong timing (lyrics during
+   intros). Now use proportional time-span distribution. Different behavior but
+   more accurate — section bar spans now weight line distribution.
+2. **@bar regex (no ^)**: Theoretically could match `@bar=5` inside lyrics text.
+   Extremely unlikely — chopro format doesn't have this pattern in lyric text.
+   Worth noting if a song title contains "@bar=N".
+3. **TUI curl call**: adds ~0.5s to each refresh. macOS always has curl. Timeout
+   is 2 seconds. Fails silently if server is down.
+4. **legacy clients**: receive `lyricSync` field in state broadcasts. Ignored if
+   client doesn't use it. Backwards compatible.
+5. **lrc-to-bars.js writes both @time AND @bar**: doubles line prefix size.
+   Acceptable trade-off for backward compatibility. Lines now look like:
+   `@time=13.52 @bar=19  [D]Well, she was an American girl`
+
+#### Pending
+
+#### Pending
+
+- **Re-run lrc-to-bars.js --all**: LRCLIB API returned 504 at time of session.
+  When API is available, run to annotate 61 zero-timing songs. Command:
+  `node tools/lrc-to-bars.js --all`
+
+#### Migration Complete (2026-07-30)
+
+Created and ran `web/tools/migrate-to-atime.js`:
+- 258 songs migrated from `@bar=N only` → `@time=N @bar=N` (dual format)
+- Time computed as `time = (bar - 1) * beatsPerBar * 60 / bpm` from existing bars
+- Original files backed up as `song.chopro.bak`
+- 61 songs skipped (no @bar annotations to migrate — need LRCLIB)
+
+**Final state after migration:**
+```
+324 songs: 258 @time=N  |  0 @bar=N only  |  61 none
+```
+- Every song that can use time-based lookups now does
+- HUD compares `position` seconds directly against `@time` — no BPM in the hot path
+- When LRCLIB comes back, `lrc-to-bars.js --all` will populate the 61 remaining songs with ground-truth LRC timestamps
+
+#### Key Insight
+
+The `@time=N` format is the keystone: by storing LRC timestamps directly (not
+converting to bars), we eliminate the single largest error source (wrong BPM).
+The HUD can compare position seconds against time seconds with zero intermediate
+conversion. For 258 currently @bar-annotated songs, re-running lrc-to-bars will
+restore the original millisecond-precise timestamps that were destroyed by the
+time→bar conversion. For GP-imported songs, `gpif-to-chopro.js` now writes
+bar-derived times from the GP file's actual tempo automation.
+
+---
+
+## 2026-07-30 — Control Surfaces: Plan & Prioritization
+
+### Session: Map out TUI show-running capabilities + iPhone practical improvements
+
+#### Assessment Summary
+
+After reviewing all code (server.js, controller.js, showman.js, build log history),
+the system has a gap: the TUI (`tui/showman.js`) is a tunnel/QR manager with no
+transport control. Running a full show from the MacBook Terminal requires the
+iPhone controller — there's no keyboard-driven fallback.
+
+The iPhone controller is feature-rich but some proposed features are gimmicky
+vs. genuinely moving the needle for show reliability.
+
+#### Implementation Plan (ordered by impact)
+
+| # | Task | File(s) | Impact | Why |
+|---|------|---------|--------|-----|
+| 1 | **TUI transport controls** | `tui/showman.js` | Critical | Enables running show from MacBook Terminal without iPhone. Uses existing `/api/local/*` endpoints. Keyboard: Space=play, n=next, p=prev, s=stop. Real-time song state display. |
+| 2 | **iPhone pre-show checklist** | `web/public/controller.js` | High | One page to verify: server running, REAPER connected, sync health of all setlist songs, tunnel status. "All systems go" or "⚠ Issues found" — prevents show failures. |
+| 3 | **iPhone lyric sync badges** | `web/public/controller.js` | High | Color-coded dots on setlist queue items showing @time coverage per song. Know before you start a song whether lyrics will be in time. |
+| 4 | **iPhone teleprompter backup** | `web/public/controller.js` | High | Full-screen lyric view on iPhone as backup if Dell HUD monitor fails. Uses existing `state.lyricLines` from WebSocket. |
+| 5 | **TUI real-time refresh** | `tui/showman.js` | Medium | 500ms refresh loop showing ticking position, section changes. Same poll rate as server → Lua bridge. |
+| 6 | **Save/load named setlists** | `web/server.js` + `controller.js` | Medium | Persist setlists to disk. Load by name. Currently setlists live in memory only — lost on server restart. |
+
+#### NOT doing (low impact / gimmicky)
+
+- Section-aware transport display on iPhone (2B) — HUD already shows sections
+- Drag-to-reorder on iPhone (2D) — touch drag mid-show is fiddly
+- iPhone "Add song" search from 325-song library — TUI/setlist page already covers this
+- TUI Section change edge flash — TUI is text-based, not a HUD
+
+#### Server Endpoints: What Already Exists vs. What's Needed
+
+| Endpoint | Status | Used By |
+|----------|--------|---------|
+| `POST /api/local/play` | ✓ Exists | TUI transport (#1) |
+| `POST /api/local/pause` | ✓ Exists | TUI transport (#1) |
+| `POST /api/local/stop` | ✓ Exists | TUI transport (#1) |
+| `POST /api/local/next` | ✓ Exists | TUI transport (#1) |
+| `POST /api/local/prev` | ✓ Exists | TUI transport (#1) |
+| `GET /api/state` | ✓ Exists | TUI song display (#1) |
+| `GET /api/sync-health` | ✓ Exists | TUI + checklist (#1, #2) |
+| `GET /api/clients` | ✓ Exists | Checklist (#2) |
+| `POST /api/preflight` | **Needed** | Checklist (#2) — runs verify over setlist |
+| `GET /api/sync-health-batch` | **Needed** | Lyric badges (#3) — sync health for all setlist songs |
+| `POST /api/local/setlist/save` | **Needed** | Named setlists (#6) |
+| `GET /api/local/setlist/list` | **Needed** | Named setlists (#6) |
+| `POST /api/local/setlist/load` | **Needed** | Named setlists (#6) |
+
+---
+
+## 2026-07-30 — TUI Transport Controls (Chunk 1/6)
+
+### Session: Make the TUI a standalone show-running interface
+
+#### What Changed
+
+**`tui/showman.js`** — 140 new lines, major rearchitecture:
+
+| Feature | Implementation |
+|---------|---------------|
+| Transport controls | Space=play/pause, n=next, b=prev, s=stop |
+| Song state display | "NOW PLAYING" section: song, key, BPM, playing/paused/stopped, bar+time, queue position, next song |
+| Auto-refresh | 500ms interval polls `/api/state` and redraws |
+| Raw mode keyboard | Single-key shortcuts (no Enter needed for transport) |
+| Command buffer | Typed commands (1, 2, q, p, 0, jump N) still work via Enter |
+| Status messages | 3-second transient messages for each action |
+| TTY guard | `process.stdin.isTTY` check prevents crash when piped |
+
+**Key design decisions:**
+
+| Decision | Rationale |
+|----------|-----------|
+| Raw mode for transport, line buffer for commands | Transport needs instant response (single keystroke). Commands like `1`/`2`/`p` are multi-step and can use Enter. |
+| `curl` for transport (not Socket.IO) | TUI is a standalone script. No npm deps. Uses existing REST endpoints. |
+| 500ms poll (not WebSocket) | Matches server's Lua bridge poll rate. No Socket.IO client needed in TUI. |
+| Full screen redraw (not in-place) | Simpler, matches Dell TUI pattern. 500ms is fast enough for text. |
+
+**Verified working:**
+
+```
+$ curl -s http://127.0.0.1:3000/api/state | python3 -c "..."
+Song: (I Can't Get No) Satisfaction
+Playing: False   Pos: 0   Queue: 1 / 322
+
+$ curl -X POST .../api/local/jump -d '{"songIndex":5}'
+{"ok":true,"songIndex":5,"currentSong":"ACHY BREAKY HEART"}
+
+$ curl -X POST .../api/local/play
+{"ok":true,"playing":true,"position":0}
+→ Position ticks to 0.6s after 1s (local engine running)
+```
+
+**TUI display (when server up with song loaded):**
+```
+NOW PLAYING
+  Song   : ACHY BREAKY HEART (E — 120 BPM)
+  State  : ▶ PLAYING
+  Pos    : Bar 5 · 1:24 / 3:32
+  Queue  : 5 / 322
+  Next   : Free Fallin'
+
+TRANSPORT
+  [Space] Play/Pause     [n] Next Song     [b] Prev Song     [s] Stop
+
+COMMANDS
+  [1] Start Tunnel          [2] Stop Tunnel
+  [q] Regenerate QR Code    [r] Refresh
+  [p] Push URL to GitHub
+  [0] Exit
+```
+
+TUI can now run a full show without the iPhone controller.
+
+---
+
+## 2026-07-30 — iPhone Pre-Show Checklist (Chunk 2/6)
+
+### Session: One-tap system health check before every show
+
+#### What Changed
+
+**`LSM/web/server.js` — new `/api/preflight` endpoint (~90 lines):**
+
+| Check | Data Source | Detail |
+|-------|------------|--------|
+| Server | Always OK (requests reach endpoint) | Port number |
+| REAPER connection | `bridge_state.json` file age | <5s = connected |
+| Tunnel | `pgrep cloudflared tunnel` | Active + URL |
+| Bumper music | `~/bumper-music/` directory scan | Track count |
+| Connected clients | `io.sockets.sockets.size` | HUD + iPhone count |
+| Setlist sync | Per-song chordpro `@time=` scan | % annotated per song |
+
+Returns: `{ server, reaper, tunnel, bumper, clients, setlist: {songs[], ok, warn, error}, allClear, issues[] }`
+
+**`web/public/controller.js` — new `checklist` page (~80 lines):**
+- Home page button: "✓ Pre-show" (alongside Bumper and Settings)
+- `/api/preflight` poll on page activation + every 10s
+- Grid of 6 check rows with ✓/✗ icons and green/red left borders
+- Summary banner: "All Systems Go" (green) or "N Issue(s) Found" (red)
+- Per-song timing coverage list with colored dots (green/yellow/red)
+- "↻ Re-check" button for manual refresh
+
+**`web/public/controller.css` — checklist styles (~60 lines):**
+- `.checklist-row` with left border color coding
+- `.checklist-song-row` with status-based backgrounds
+- Verify button styling
+
+#### Verified working
+
+```
+$ curl -X POST .../api/local/setlist -d '{"songs":[{"title":"American Girl"},{"title":"Free Fallin'"'"'"}]}'
+{"ok":true,"count":4,"currentSong":"American Girl"}
+
+$ curl .../api/preflight
+→ Server ✓ | REAPER ✗ | Tunnel ✗ | Bumper ✓ (20 tracks) | Clients 0 | Setlist 4 (2 ok, 2 warn)
+→ American Girl: 73% (warn), Free Fallin': 85% (warn), Mary Jane's Last Dance: 97% (ok)
+```
+
+#### Design Notes
+- Preflight scans chordpro files directly (not cached) — ensures fresh data if files were edited
+- File I/O for 4-20 songs takes <50ms total
+- Auto-refresh disabled on page deactivation (no polling leakage)
+
+---
+
+## 2026-07-30 — iPhone Lyric Sync Badges on Setlist (Chunk 3/6)
+
+### Session: Know song timing confidence before you start playing
+
+#### What Changed
+
+**`web/public/controller.js` — modified `setlist` page:**
+
+- New `fetchSyncBadges()` function — calls `/api/preflight`, extracts per-song sync data, stores in `state._syncBadges`
+- Called on setlist page activation
+- `renderSetlistFromState()` now renders a colored dot next to each queue item:
+  - Green (≥95%) = good timing
+  - Yellow (70–94%) = some gaps
+  - Red (<70%) = risky — check before playing
+- New `#setlist-sync-summary` bar above the queue:
+  - "✓ All N songs have good timing coverage" (green background)
+  - "N song(s) below 95% timing coverage" (yellow background)
+  - "⚠ N song(s) have poor timing — check before playing" (red background)
+- Removed duplicate `renderSetlistFromState` function (was a bug from prior session)
+
+#### Verified working
+- Setlist with 4 songs: 2 ok (green), 2 warn (yellow) — badges render correctly
+- Summary bar shows "2 song(s) below 95% timing coverage" on yellow background
+- Badges are 8px dots with title attribute showing exact percentage
+
+---
+
+## 2026-07-30 — iPhone Teleprompter Backup (Chunk 4/6)
+
+### Session: Critical redundancy if Dell HUD monitor fails mid-show
+
+#### What Changed
+
+**`web/public/controller.js` — new `teleprompter` page (~60 lines):**
+
+- Home page button: "📖 Lyrics" (small buttons row)
+- Shows current lyric line in large text (24px, bold, white)
+- Shows past line (dimmed, 13px grey)
+- Shows 2 future lines (dimmed, 15px/13px grey)
+- Line matching: finds `_time <= position` from `state.lyricLines`
+- Progress bar at bottom (green bar showing position through lyrics)
+- Song title header
+- Updates on every Socket.IO state change (real time)
+
+**`web/public/controller.css` — teleprompter styles (~20 lines):**
+- `.tele-lyrics` — centered flex column, full viewport height
+- `.tele-present/.tele-future/.tele-past` — sizing and color classes
+
+#### Design Notes
+- Uses same `state.lyricLines` data as the HUD — guaranteed to match what's on the Dell screen
+- If lyrics have `@time=N` annotations, line timing is accurate to 10ms
+- If no `@time` available, falls back to first line (still shows lyrics, just not synced)
+- Inline styles for simplicity — no need for complex CSS layout on a single-purpose page
+
+---
+
+## 2026-07-30 — Save/Load Named Setlists (Chunk 6/6)
+
+### Session: Persist setlists across sessions — no more losing the setlist on restart
+
+#### What Changed
+
+**`LSM/web/server.js` — 3 new endpoints (~60 lines):**
+
+| Endpoint | Method | Body | Response |
+|----------|--------|------|----------|
+| `/api/local/setlist/save` | POST | `{name: "Friday Night"}` | `{ok, name, count}` |
+| `/api/local/setlist/list` | GET | — | `{ok, setlists: [{name, count, savedAt}]}` |
+| `/api/local/setlist/load` | POST | `{name: "Friday Night"}` | `{ok, name, count, currentSong}` |
+
+- Setlists stored as JSON in `data/setlists/{name}.json`
+- Auto-created directory on first save
+- Name sanitization: only `[a-zA-Z0-9 _-]`, max 64 chars
+- Loaded setlist becomes active immediately (sets `activeSetlist`, jumps to first song)
+
+**`web/public/controller.js` — Setlist page UI (~50 lines):**
+
+- New save/load row below queue/library tabs:
+  - Text input for setlist name
+  - "Save" button (green border) — saves current queue
+  - "Load" button (blue border) — toggles dropdown of saved setlists
+- Click on a saved setlist loads it and auto-fills the name
+- Save button shows "✓ Saved" confirmation for 2 seconds
+
+**Verified working:**
+```
+$ curl -X POST .../api/local/setlist/save -d '{"name":"Friday Show"}'
+{"ok":true,"name":"Friday Show","count":2}
+$ curl .../api/local/setlist/list
+{"ok":true,"setlists":[{"name":"Friday Show","count":2,"savedAt":"2026-07-30T21:53:59Z"}]}
+$ curl -X POST .../api/local/setlist/load -d '{"name":"Friday Show"}'
+{"ok":true,"name":"Friday Show","count":2,"currentSong":"American Girl"}
+```
+
+---
+
+## 2026-07-30 — Control Surfaces: Session Summary
+
+### All 6 Chunks Complete
+
+| # | Feature | Status | Impact |
+|---|---------|--------|--------|
+| 1 | TUI transport controls + song state + refresh | ✓ Done | TUI can run full show without iPhone |
+| 2 | iPhone pre-show checklist + `/api/preflight` | ✓ Done | One-tap system health before every show |
+| 3 | iPhone lyric sync badges on setlist | ✓ Done | Know timing confidence before starting song |
+| 4 | iPhone teleprompter backup | ✓ Done | Redundancy if Dell HUD monitor fails |
+| 5 | TUI real-time refresh (500ms) | ✓ Done | Position ticks live in TUI |
+| 6 | Save/load named setlists | ✓ Done | Setlists persist across server restarts |
+
+### Files Changed
+
+| File | Lines Changed | Summary |
+|------|--------------|---------|
+| `tui/showman.js` | +140 | Transport controls, song state, raw-mode keyboard, auto-refresh |
+| `web/server.js` | +150 | `/api/preflight`, setlist save/load/list endpoints |
+| `web/public/controller.js` | +220 | Checklist page, sync badges, teleprompter, setlist save/load UI |
+| `web/public/controller.css` | +80 | Checklist rows, teleprompter, sync badge styles |
+
+### Server Endpoints Added
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/preflight` | Full-system health: server, REAPER, tunnel, bumper, clients, per-song sync |
+| `POST /api/local/setlist/save` | Save current setlist to named file |
+| `GET /api/local/setlist/list` | List all saved setlists |
+| `POST /api/local/setlist/load` | Load a saved setlist by name |
 

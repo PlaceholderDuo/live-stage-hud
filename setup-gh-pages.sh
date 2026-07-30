@@ -121,4 +121,4 @@ fi
 
 echo ""
 echo "QR code target: https://$GH_USER.github.io/live-hud/guest.html"
-echo "This URL NEVER changes. Update the redirect with the TUI (node tui/showman.js)."
+echo "This URL NEVER changes. Update the redirect from the TUI (start show server → p key)."

@@ -323,6 +323,8 @@
           <button class="trans-btn" id="btn-prev">⏮</button>
           <button class="trans-btn trans-play" id="btn-play">▶ PLAY</button>
           <button class="trans-btn" id="btn-next">⏭</button>
+          <button class="trans-btn trans-seek" id="btn-seek-back" style="display:none;">⟵5s</button>
+          <button class="trans-btn trans-seek" id="btn-seek-fwd" style="display:none;">5s⟶</button>
           <div class="trans-info">
             <div class="trans-song" id="trans-song">${state.activeSong || 'No song loaded'}</div>
             <div class="trans-pos" id="trans-pos">--</div>
@@ -409,6 +411,12 @@
             <span>♪ Bumper</span>
             <span class="double-tap-hint">⟐⟐ DOUBLE TAP</span>
           </div>
+          <div class="small-btn" id="btn-teleprompter">
+            <span>📖 Lyrics</span>
+          </div>
+          <div class="small-btn" id="btn-checklist">
+            <span>✓ Pre-show</span>
+          </div>
           <div class="small-btn" id="btn-settings">
             <span>⚙ Settings</span>
           </div>
@@ -440,7 +448,16 @@
         sendCommand('prev');
       });
 
+      // Seek back 5s (nudge)
+      document.getElementById('btn-seek-back').addEventListener('click', function () {
+        sendCommand('seek', { offset: -5 });
+      });
+      document.getElementById('btn-seek-fwd').addEventListener('click', function () {
+        sendCommand('seek', { offset: 5 });
+      });
+
       updateTransportDisplay();
+      updateNudgeButtons();
 
       // Tap Tempo
       document.getElementById('tap-tempo-btn').addEventListener('click', function () {
@@ -542,6 +559,16 @@
       document.getElementById('btn-settings').addEventListener('click', function () {
         navigateTo('settings');
       });
+
+      // Pre-show checklist
+      document.getElementById('btn-checklist').addEventListener('click', function () {
+        navigateTo('checklist');
+      });
+
+      // Teleprompter (lyrics backup)
+      document.getElementById('btn-teleprompter').addEventListener('click', function () {
+        navigateTo('teleprompter');
+      });
     },
 
     onState: function (msg) {
@@ -577,6 +604,14 @@
     var m = Math.floor(secs / 60);
     var s = Math.floor(secs % 60);
     return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function updateNudgeButtons() {
+    var enabled = getSetting('nudgeControls', false);
+    var back = document.getElementById('btn-seek-back');
+    var fwd = document.getElementById('btn-seek-fwd');
+    if (back) back.style.display = enabled ? '' : 'none';
+    if (fwd) fwd.style.display = enabled ? '' : 'none';
   }
 
   // ─── KEYS Toggle ────────────────────────────────────
@@ -873,7 +908,14 @@
           '<button class="setlist-tab active" id="tab-queue">Queue</button>' +
           '<button class="setlist-tab" id="tab-library">Library</button>' +
         '</div>' +
+        '<div id="setlist-save-row" style="display:flex;gap:4px;margin-bottom:8px;">' +
+          '<input id="setlist-name" placeholder="Setlist name..." style="flex:1;background:#151515;border:1px solid #333;border-radius:6px;padding:6px 8px;font-size:12px;color:#fff;">' +
+          '<button id="setlist-save-btn" style="background:#252525;color:#2ecc71;border:1px solid #2ecc71;border-radius:6px;padding:6px 12px;font-size:12px;">Save</button>' +
+          '<button id="setlist-load-btn" style="background:#252525;color:#3399ff;border:1px solid #3399ff;border-radius:6px;padding:6px 12px;font-size:12px;">Load</button>' +
+        '</div>' +
+        '<div id="setlist-load-list" style="display:none;margin-bottom:8px;"></div>' +
         '<input class="setlist-search" id="setlist-search" placeholder="Search 322 songs..." style="display:none;">' +
+        '<div id="setlist-sync-summary" style="display:none;font-size:10px;padding:4px 8px;margin-bottom:4px;border-radius:6px;"></div>' +
         '<div class="setlist-queue" id="setlist-queue"></div>' +
         '<div class="setlist-library" id="setlist-library" style="display:none;"></div>';
     },
@@ -886,6 +928,65 @@
       document.getElementById('tab-library').addEventListener('click', function () { showSetlistTab('library'); loadLibrary(); });
       document.getElementById('setlist-search').addEventListener('input', function () { loadLibrary(this.value); });
 
+      // Save setlist
+      document.getElementById('setlist-save-btn').addEventListener('click', function () {
+        var name = document.getElementById('setlist-name').value.trim();
+        if (!name) { alert('Enter a name for this setlist'); return; }
+        fetch('/api/local/setlist/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name }),
+        }).then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data.ok) {
+              var btn = document.getElementById('setlist-save-btn');
+              btn.textContent = '✓ Saved';
+              btn.style.color = '#2ecc71';
+              setTimeout(function () { btn.textContent = 'Save'; }, 2000);
+            }
+          });
+      });
+
+      // Load setlist — toggle list
+      document.getElementById('setlist-load-btn').addEventListener('click', function () {
+        var list = document.getElementById('setlist-load-list');
+        if (list.style.display === 'none') {
+          fetch('/api/local/setlist/list')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              if (!data.setlists || data.setlists.length === 0) {
+                list.innerHTML = '<div style="color:#666;font-size:11px;padding:4px;">No saved setlists.</div>';
+              } else {
+                var html = '';
+                data.setlists.forEach(function (sl) {
+                  html += '<div class="saved-setlist-item" data-name="' + sl.name + '" style="display:flex;align-items:center;padding:8px;background:#151515;border-radius:8px;margin-bottom:4px;cursor:pointer;">';
+                  html += '  <span style="flex:1;font-size:13px;color:#fff;">' + sl.name + '</span>';
+                  html += '  <span style="color:#666;font-size:11px;margin-right:8px;">' + sl.count + ' songs</span>';
+                  html += '  <span style="color:#2ecc71;font-size:16px;">▶</span>';
+                  html += '</div>';
+                });
+                list.innerHTML = html;
+                list.querySelectorAll('.saved-setlist-item').forEach(function (item) {
+                  item.addEventListener('click', function () {
+                    var slName = this.dataset.name;
+                    fetch('/api/local/setlist/load', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name: slName }),
+                    }).then(function () {
+                      list.style.display = 'none';
+                      document.getElementById('setlist-name').value = slName;
+                    });
+                  });
+                });
+              }
+              list.style.display = '';
+            });
+        } else {
+          list.style.display = 'none';
+        }
+      });
+
       setKnobLabels({
         1: { name: '--', value: '', color: '#333' },
         2: { name: '--', value: '', color: '#333' },
@@ -894,6 +995,7 @@
       });
 
       renderSetlistFromState(state);
+      fetchSyncBadges();
     },
 
     onState: function (msg) {
@@ -970,12 +1072,19 @@
     var html = '<div style="color:#666;font-size:10px;margin-bottom:4px;">' + songs.length + ' songs</div>';
     songs.forEach(function (song, i) {
       var isActive = i === activeIdx, isPast = i < activeIdx;
+      var badge = state._syncBadges ? (state._syncBadges[song.title] || null) : null;
+      var badgeHtml = '';
+      if (badge) {
+        var dotColor = badge.status === 'ok' ? '#2ecc71' : badge.status === 'warn' ? '#f1c40f' : '#e74c3c';
+        badgeHtml = '<span class="sync-badge" style="width:8px;height:8px;border-radius:50%;background:' + dotColor + ';margin-left:6px;flex-shrink:0;" title="' + badge.annotatedPct + '% timing coverage"></span>';
+      }
       html += '<div class="queue-item' + (isActive?' active':'') + (isPast?' past':'') + '">';
       html += '  <span class="queue-num">' + (i+1) + '</span>';
       html += '  <div class="queue-info">';
       html += '    <span class="song-title">' + escapeHtml(song.title||'Unknown') + '</span>';
       html += '    <span class="song-artist">' + escapeHtml(song.artist||'') + '</span>';
       html += '  </div>';
+      html += '  ' + badgeHtml;
       html += '  <span class="queue-status">' + (isActive?'▶ NOW':isPast?'✓':'') + '</span>';
       html += '  <button class="queue-remove-btn" data-title="' + escapeHtml(song.title||'') + '">✕</button>';
       html += '</div>';
@@ -986,29 +1095,44 @@
     });
   }
 
-  function renderSetlistFromState(msg) {
-    var el = document.getElementById('setlist-queue');
-    if (!el) return;
-    var songs = msg.setlist || [];
-    var activeIdx = msg.songIndex ? msg.songIndex - 1 : -1;
-    if (songs.length === 0) {
-      el.innerHTML = '<div style="text-align:center;color:#555;padding:40px;font-size:14px;">No setlist loaded. Start the show on TUI.</div>';
-      return;
-    }
-    var html = '';
-    songs.forEach(function (song, i) {
-      var isActive = i === activeIdx;
-      var isPast = i < activeIdx;
-      html += '<div class="queue-item' + (isActive ? ' active' : '') + (isPast ? ' past' : '') + '">';
-      html += '  <span class="queue-num">' + (i + 1) + '</span>';
-      html += '  <div class="queue-info">';
-      html += '    <span class="song-title">' + (song.title || 'Unknown') + '</span>';
-      html += '    <span class="song-artist">' + (song.artist || '') + '</span>';
-      html += '  </div>';
-      html += '  <span class="queue-status">' + (isActive ? '▶ NOW' : isPast ? '✓' : '') + '</span>';
-      html += '</div>';
-    });
-    el.innerHTML = html;
+  function fetchSyncBadges() {
+    fetch('/api/preflight')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var badges = {};
+        var songs = data.setlist && data.setlist.songs ? data.setlist.songs : [];
+        songs.forEach(function(s) {
+          badges[s.title] = { annotatedPct: s.annotatedPct, status: s.status };
+        });
+        state._syncBadges = badges;
+        renderSetlistFromState(state);
+
+        // Summary bar
+        var summary = document.getElementById('setlist-sync-summary');
+        if (summary) {
+          summary.style.display = '';
+          var total = data.setlist.count || 0;
+          var err = data.setlist.error || 0;
+          var warn = data.setlist.warn || 0;
+          if (err > 0) {
+            summary.textContent = '⚠ ' + err + ' song(s) have poor timing — check before playing';
+            summary.style.background = '#2e0a0a';
+            summary.style.color = '#e74c3c';
+          } else if (warn > 0) {
+            summary.textContent = warn + ' song(s) below 95% timing coverage';
+            summary.style.background = '#1a1a0a';
+            summary.style.color = '#f1c40f';
+          } else if (total > 0) {
+            summary.textContent = '✓ All ' + total + ' songs have good timing coverage';
+            summary.style.background = '#0a1a0a';
+            summary.style.color = '#2ecc71';
+          }
+        }
+      })
+      .catch(function() {
+        var summary = document.getElementById('setlist-sync-summary');
+        if (summary) summary.style.display = 'none';
+      });
   }
 
   function renderQueue(queue, activeIndex) {
@@ -1095,6 +1219,10 @@
         '<div class="settings-section">' +
           '<h3>General</h3>' +
           '<div class="settings-item">' +
+            '<span class="label">Nudge Controls (±5s)</span>' +
+            '<span class="value" id="setting-nudge" style="cursor:pointer;">' + (getSetting('nudgeControls', false) ? 'ON' : 'OFF') + '</span>' +
+          '</div>' +
+          '<div class="settings-item">' +
             '<span class="label">Tuner on teleprompter</span>' +
             '<span class="value">' + (getSetting('tunerTeleprompter', false) ? 'ON' : 'OFF') + '</span>' +
           '</div>' +
@@ -1134,6 +1262,18 @@
       document.getElementById('settings-return').addEventListener('click', function () {
         navigateTo('home');
       });
+
+      // Nudge controls toggle
+      var nudgeEl = document.getElementById('setting-nudge');
+      if (nudgeEl) {
+        nudgeEl.addEventListener('click', function () {
+          var current = getSetting('nudgeControls', false);
+          setSetting('nudgeControls', !current);
+          this.textContent = !current ? 'ON' : 'OFF';
+          this.className = 'value ' + (!current ? 'ok' : '');
+          updateNudgeButtons();
+        });
+      }
     },
 
     onState: function (msg) {
@@ -1150,8 +1290,233 @@
   });
 
   // ════════════════════════════════════════════════════════
-  // ─── GTR AMP PRESETS ─────────────────────────────────
+  // ─── PAGE: PRE-SHOW CHECKLIST ────────────────────────
   // ════════════════════════════════════════════════════════
+
+  var checklistPollTimer = null;
+
+  registerPage('checklist', {
+    render: function (container) {
+      container.innerHTML =
+        '<div class="checklist-header">' +
+          '<h2>Pre-Show Checklist</h2>' +
+          '<button class="checklist-return" id="checklist-return">← Back</button>' +
+        '</div>' +
+        '<div id="checklist-body">' +
+          '<div style="text-align:center;color:#666;padding:40px;font-size:14px;">Checking systems...</div>' +
+        '</div>' +
+        '<div id="checklist-summary" style="display:none;text-align:center;padding:16px 0;">' +
+          '<div id="checklist-banner" style="font-size:20px;font-weight:700;padding:12px;border-radius:12px;"></div>' +
+          '<div id="checklist-issues" style="margin-top:8px;font-size:13px;color:#ff8800;"></div>' +
+        '</div>' +
+        '<button class="checklist-verify-btn" id="checklist-verify" style="margin-top:8px;">↻ Re-check</button>';
+    },
+
+    onActivate: function () {
+      document.getElementById('checklist-return').addEventListener('click', function () {
+        navigateTo('home');
+      });
+      document.getElementById('checklist-verify').addEventListener('click', function () {
+        runChecklist();
+      });
+
+      runChecklist();
+
+      // Auto-refresh every 10s while on this page
+      if (checklistPollTimer) clearInterval(checklistPollTimer);
+      checklistPollTimer = setInterval(function () {
+        if (state.currentPage === 'checklist') runChecklist();
+      }, 10000);
+    },
+
+    onDeactivate: function () {
+      if (checklistPollTimer) {
+        clearInterval(checklistPollTimer);
+        checklistPollTimer = null;
+      }
+    },
+  });
+
+  function runChecklist() {
+    var body = document.getElementById('checklist-body');
+    if (!body) return;
+
+    fetch('/api/preflight')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        renderChecklist(data);
+      })
+      .catch(function () {
+        body.innerHTML = '<div style="text-align:center;color:#e74c3c;padding:40px;font-size:14px;">Could not reach server. Is it running?</div>';
+      });
+  }
+
+  function renderChecklist(data) {
+    var body = document.getElementById('checklist-body');
+    var banner = document.getElementById('checklist-banner');
+    var issues = document.getElementById('checklist-issues');
+    var summary = document.getElementById('checklist-summary');
+    if (!body) return;
+
+    summary.style.display = '';
+
+    if (data.allClear) {
+      banner.textContent = 'All Systems Go';
+      banner.style.background = '#0a2e0a';
+      banner.style.color = '#2ecc71';
+      issues.innerHTML = 'Ready for show.';
+    } else {
+      banner.textContent = data.issues.length + ' Issue(s) Found';
+      banner.style.background = '#2e0a0a';
+      banner.style.color = '#e74c3c';
+      issues.innerHTML = data.issues.map(function (i) { return '⚠ ' + i; }).join('<br>');
+    }
+
+    var rows = [
+      { label: 'Server', ok: data.server.ok, detail: 'Port ' + (data.server.port || '3000') },
+      { label: 'REAPER', ok: data.reaper.connected, detail: data.reaper.connected ? ('Bridge: ' + data.reaper.bridgeAgeSec + 's') : 'Not connected' },
+      { label: 'Tunnel', ok: data.tunnel.active, detail: data.tunnel.active ? 'Live' : 'Not active' },
+      { label: 'Bumper Music', ok: data.bumper.ready, detail: data.bumper.tracks + ' tracks' },
+      { label: 'Clients', ok: data.clients.count > 0, detail: data.clients.count + ' connected' },
+      { label: 'Setlist Sync', ok: data.setlist.error === 0 && data.setlist.warn === 0, detail: data.setlist.count > 0 ? (data.setlist.ok + ' OK, ' + data.setlist.warn + ' warn, ' + data.setlist.error + ' err') : 'No setlist' },
+    ];
+
+    var html = '<div class="checklist-grid">';
+    rows.forEach(function (row) {
+      var icon = row.ok ? '✓' : '✗';
+      var cls = row.ok ? 'check-ok' : 'check-fail';
+      html += '<div class="checklist-row ' + cls + '">';
+      html += '  <span class="check-icon">' + icon + '</span>';
+      html += '  <span class="check-label">' + row.label + '</span>';
+      html += '  <span class="check-detail">' + row.detail + '</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    // Per-song sync details
+    if (data.setlist && data.setlist.songs && data.setlist.songs.length > 0) {
+      html += '<div class="checklist-songs" style="margin-top:12px;">';
+      html += '<div style="color:#666;font-size:10px;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px;">Song Timing Coverage</div>';
+      data.setlist.songs.forEach(function (s) {
+        var songCls = s.status === 'ok' ? 'check-ok' : s.status === 'warn' ? 'check-warn' : 'check-fail';
+        html += '<div class="checklist-song-row ' + songCls + '" style="display:flex;align-items:center;padding:6px 8px;margin:2px 0;border-radius:8px;font-size:12px;">';
+        html += '  <span class="check-dot" style="width:8px;height:8px;border-radius:50%;margin-right:8px;flex-shrink:0;background:' + (s.status === 'ok' ? '#2ecc71' : s.status === 'warn' ? '#f1c40f' : '#e74c3c') + ';"></span>';
+        html += '  <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ddd;">' + (s.title || '?') + '</span>';
+        html += '  <span style="margin-left:8px;flex-shrink:0;color:#888;">' + s.annotatedPct + '%</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    body.innerHTML = html;
+  }
+
+  // ════════════════════════════════════════════════════════
+  // ─── PAGE: TELEPROMPTER (Lyric Backup) ───────────────
+  // ════════════════════════════════════════════════════════
+
+  registerPage('teleprompter', {
+    render: function (container) {
+      container.innerHTML =
+        '<div class="tele-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+          '<div class="tele-song" id="tele-song" style="font-size:12px;color:#888;flex:1;"></div>' +
+          '<button class="tele-return" id="tele-return" style="background:#252525;color:#f0f0f0;border:1px solid #333;border-radius:6px;padding:6px 12px;font-size:12px;">← Back</button>' +
+        '</div>' +
+        '<div class="tele-lyrics" id="tele-lyrics" style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100%;padding:8px;">' +
+          '<div style="text-align:center;color:#555;font-size:16px;">' +
+            'No lyrics loaded.<br>' +
+            '<span style="font-size:12px;">Load a song to see lyrics here.</span>' +
+          '</div>' +
+        '</div>';
+    },
+
+    onActivate: function () {
+      document.getElementById('tele-return').addEventListener('click', function () {
+        navigateTo('home');
+      });
+      setKnobLabels({
+        1: { name: '--', value: '', color: '#333' },
+        2: { name: '--', value: '', color: '#333' },
+        3: { name: '--', value: '', color: '#333' },
+        4: { name: '--', value: '', color: '#333' },
+      });
+      renderTeleLyrics();
+    },
+
+    onState: function (msg) {
+      if (msg.lyricLines) state.lyricLines = msg.lyricLines;
+      if (msg.position !== undefined) state.position = msg.position;
+      if (msg.currentSong) state.activeSong = msg.currentSong;
+      renderTeleLyrics();
+    },
+  });
+
+  function renderTeleLyrics() {
+    var el = document.getElementById('tele-lyrics');
+    var songEl = document.getElementById('tele-song');
+    if (!el) return;
+
+    if (songEl) {
+      songEl.textContent = state.activeSong || '';
+    }
+
+    var lines = state.lyricLines || [];
+    var pos = state.position || 0;
+
+    if (lines.length === 0) {
+      el.innerHTML = '<div style="text-align:center;color:#555;font-size:16px;">No lyrics for this song.</div>';
+      return;
+    }
+
+    // Find current line: highest _time <= position
+    var currentIdx = -1;
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i]._time;
+      if (t !== undefined && t <= pos) currentIdx = i;
+    }
+
+    // If no time-based match, use the first line
+    if (currentIdx < 0) currentIdx = 0;
+
+    // Show current + 2 future lines
+    var past = Math.max(0, currentIdx - 1);
+    var present = lines[currentIdx];
+    var future1 = lines[currentIdx + 1] || null;
+    var future2 = lines[currentIdx + 2] || null;
+
+    var html = '';
+
+    // Past line (dim)
+    if (currentIdx > 0 && lines[currentIdx - 1]) {
+      html += '<div class="tele-line tele-past" style="font-size:13px;color:#444;margin-bottom:4px;text-align:center;">' +
+        escapeHtml(lines[currentIdx - 1].text || '') + '</div>';
+    }
+
+    // Current line (large)
+    if (present) {
+      html += '<div class="tele-line tele-present" style="font-size:24px;font-weight:700;color:#fff;margin-bottom:8px;text-align:center;line-height:1.3;">' +
+        escapeHtml(present.text || '') + '</div>';
+    }
+
+    // Future lines (dimmed)
+    if (future1) {
+      html += '<div class="tele-line tele-future" style="font-size:15px;color:#555;margin-bottom:4px;text-align:center;">' +
+        escapeHtml(future1.text || '') + '</div>';
+    }
+    if (future2) {
+      html += '<div class="tele-line tele-future" style="font-size:13px;color:#444;text-align:center;">' +
+        escapeHtml(future2.text || '') + '</div>';
+    }
+
+    // Progress indicator
+    if (lines.length > 0) {
+      var pct = Math.min(100, Math.round((currentIdx / lines.length) * 100));
+      html += '<div style="width:100%;height:2px;background:#222;margin-top:16px;border-radius:1px;overflow:hidden;">' +
+        '<div style="width:' + pct + '%;height:100%;background:#2ecc71;transition:width 0.5s;"></div></div>';
+    }
+
+    el.innerHTML = html;
+  }
 
   var gtrAmpPresets = [
     { name: 'BE',       type: 'drive', label: 'DRIVE', color: '#e74c3c' },
