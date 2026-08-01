@@ -1358,11 +1358,14 @@ The audio pipeline was already built in a prior session, including:
 | 3 | `verify-lyric-audio.py` | Whisper on YOUR stems | High (ground truth from your audio) |
 | 4 | `sync-lyric-to-audio.py` | Whisper re-writes @time | Premium (ground truth in chopro) |
 
-**State:**
-- 270 songs have stems ready for Whisper verification
-- 253 songs have @time annotations (from LRCLIB or @bar→time migration)
-- Whisper tiny model works on CPU (~30s per song)
-- 15 songs still have NO timing at all — need lrc-to-bars or direct Whisper sync
+**State (2026-07-30):**
+- 271 songs, 271 real BPM (handoff 3 metadata repair — zero BPM=120 defaults remain)
+- 270 have stems ready for Whisper
+- 95 fully timed (100% @time coverage), 170 partially timed, 2 missing (Untitled, Urgent)
+- `song-status.py` — new master status dashboard (ANSI table + JSON + CSV output)
+- `verify-lyric-audio.py` updated: now handles new chopro format (trailing @N.N)
+  Tested on Gravity: 59% aligned (tiny model), 0.73s avg offset
+- `sync-lyric-to-audio.py` updated: detects format, writes trailing @N.N for new-format files
 
 **Remaining gap: Whisper scripts write old format**
 
