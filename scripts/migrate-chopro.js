@@ -217,6 +217,19 @@ function toNewFormat(parsed) {
 
 function migrateFile(filePath) {
   var oldText = fs.readFileSync(filePath, "utf8");
+
+  // Skip already-migrated files — if any line is a clean ## header, it's new format
+  var lines = oldText.split("\n");
+  var isNewFormat = false;
+  for (var i = 0; i < lines.length; i++) {
+    var t = lines[i].trim();
+    if (t.substring(0, 2) === "##" && t.indexOf("{") === -1) {
+      isNewFormat = true;
+      break;
+    }
+  }
+  if (isNewFormat) return false;
+
   var parsed = parseOldFormat(oldText);
   var newText = toNewFormat(parsed);
 

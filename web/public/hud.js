@@ -265,6 +265,7 @@
         }
         content = content.replace(/@time\s*=\s*[\d]+\.?\d*\s*/gi, "")
                          .replace(/@bar\s*=\s*\d+\s*/gi, "")
+                         .replace(/##\s+[^@]*?(?:\s*@[\d.]+)?$/, "")  // strip embedded ## headers
                          .trim();
         // Unwrap bare chord markers: /C G Am/
         if (content.charAt(0) === "/" && content.lastIndexOf("/") > 0) {

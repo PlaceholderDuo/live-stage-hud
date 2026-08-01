@@ -1915,3 +1915,75 @@ $ curl -X POST .../api/local/seek -d '{"offset":-3}'
 → During playback: position jumps +10s mid-play, continues ticking
 ```
 
+
+---
+
+## 2026-07-30 (Session 3)
+
+### Session: Full System Audit + LRCLIB Gold Standard + Stage-Ready Verification
+
+#### LRCLIB is BACK
+
+After returning 504 errors earlier, LRCLIB (lrclib.net) is operational again.
+The API provides millisecond-precise timing for every lyric line from the
+original studio recording:
+
+```
+"I got my first real six-string" → 4.96s
+"Bought it at the five and dime"  → 7.91s
+"Played it 'til my fingers bled"  → 11.34s
+```
+
+This eliminates the need for Whisper-based timing entirely. The `lrc-to-bars.js`
+script was already updated to write `@time=N` directly from LRC timestamps.
+
+#### Three-Tier Verification Pyramid (Final)
+
+| Tier | Tool | Data Source | Precision |
+|------|------|-------------|-----------|
+| 1 | `verify-lyric-sync.js` | File consistency | Basic — checks format, coverage, monotonicity |
+| 2 | `lrc-to-bars.js` | LRCLIB API (original recording) | **Gold standard** — millisecond-precise |
+| 3 | `verify-lyric-audio.py` | Whisper on full.mp3 | Optional — second opinion validation |
+| — | `song-status.py` | All sources | Master dashboard per song |
+
+#### Format Migration Complete
+
+All .chopro files migrated to compact format:
+- `## Section Name @seconds` headers (replaces {start_of_verse}/etc)
+- Trailing `@N.N` on content lines (replaces @time=N @bar=N prefix)
+- `/bare chords/` markers for instrumental chord rows
+- Parser in hud.js/server.js/verify.js handles BOTH old and new formats
+- Critical fallback: old @time=N regex in new-format files (load-bearing for ~40 songs)
+
+#### Chopro Parser Consistency
+
+Three parsers must stay in sync — all now include trailing @N.N + old @time=N fallback:
+- `hud.js` — `parseChordPro()` (HUD client display)
+- `server.js` — `extractLyricLines()` (sync health + lyric API)
+- `verify-lyric-sync.js` — `parseChoproLines()` (verification tool)
+
+#### Remaining: Display Test Harness
+
+Need a test that simulates the HUD rendering pipeline end-to-end:
+- Load a chopro file → parseChordPro → prepareSongLines → renderRollingEngine
+- Feed simulated positions and verify the correct line appears
+- Check that no raw annotations (@time=, @bar=, ##, {, /bare/) leak into display
+- Test with clean new-format, mixed-format, and old-format files
+
+#### Key Commands (Summary)
+
+```
+# Get LRCLIB gold-standard timing for all songs
+node tools/lrc-to-bars.js --all --force
+
+# Verify clean state
+node tools/verify-lyric-sync.js
+
+# Per-song status dashboard
+python3 tools/song-status.py
+
+# Master list of songs needing attention
+python3 tools/song-status.py --missing
+python3 tools/song-status.py --no-stems
+python3 tools/song-status.py --json > song-status.json
+```
