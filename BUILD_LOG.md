@@ -159,6 +159,16 @@ redundancy, and made the files heavier than needed:
 | `~/ReaperSongs/*/song.chopro.bak` | 328 backup files preserved |
 | `BUILD_LOG.md` | This entry |
 
+### Post-migration cleanup (same session)
+
+- **Double-migration fix**: Migration script ran twice, corrupting 271 files with nested `##` headers in content lines. Restored clean output from `.bak` files.
+- **Migration idempotency**: Script now detects `##` headers and skips already-migrated files.
+- **Parser ## debris guard**: All three parsers (`hud.js`, `server.js`, `verify-lyric-sync.js`) now skip content lines that resolve to `##` text after annotation stripping — handles migration artifacts.
+- **Dual-format fallback verified**: All three parsers confirmed to have trailing `@N.N` (new) + `@time=N` regex (old) dual-extraction with annotation stripping.
+- **Handoff correction**: Created `ai-handoff/handoff-0-FORMAT-CORRECTION.txt` documenting the format change, loading first (prefix `0-`) so future sessions see it before stale handoffs.
+
+**Final state**: 271 files with clean `##` headers, 134 using `/bare chord/` markers, 44 with legacy `@time=` (parser fallback handles). All parsers consistent.
+
 
 
 ---
@@ -1314,6 +1324,55 @@ Run: `node "~/Library/Application Support/REAPER/Scripts/Live Show Manager/web/t
 - LIGHTS page not implemented
 - Tuner not tested with actual guitar signal
 - Network dependency — no offline fallback if WiFi drops
+
+---
+
+## 2026-07-30 (Session 2)
+
+### Session: Audio-Backed Lyric Verification Pipeline
+
+#### Discovery
+
+The audio pipeline was already built in a prior session, including:
+
+**Audio download + stem separation:**
+- `audio-pipeline.py` — Downloaded 274 songs from YouTube → `~/Music/SongAudio/<Song>/full.mp3`
+  (mono 22kHz 48kbps mp3, via yt-dlp + ffmpeg)
+- Demucs stem separation was run across all songs: 270 songs have `stems/vocals.mp3`,
+  `stems/drums.mp3`, `stems/bass.mp3`, `stems/other.mp3`
+
+**Whisper-based lyric alignment:**
+- `sync-lyric-to-audio.py` (260 lines) — Whisper on vocals stem → word timestamps →
+  matches against ChordPro lyrics → rewrites `@time=N @bar=N` with ground-truth timing
+- `verify-lyric-audio.py` (233 lines) — Whisper on vocals stem → checks if existing
+  `@time` annotations align with actual singing in the audio
+- Tested on "I Shot the Sheriff" (tiny model): 35% aligned, 1.41s avg offset
+  (low score because chopro has old mixed-format annotations)
+
+**Verification pyramid (three-tier):**
+
+| Tier | Tool | Data | Precision |
+|------|------|------|-----------|
+| 1 | `verify-lyric-sync.js` | File consistency | Low (file check only) |
+| 2 | `lrc-to-bars.js` | LRCLIB API (original recording) | Medium (accurate but wrong recording) |
+| 3 | `verify-lyric-audio.py` | Whisper on YOUR stems | High (ground truth from your audio) |
+| 4 | `sync-lyric-to-audio.py` | Whisper re-writes @time | Premium (ground truth in chopro) |
+
+**State:**
+- 270 songs have stems ready for Whisper verification
+- 253 songs have @time annotations (from LRCLIB or @bar→time migration)
+- Whisper tiny model works on CPU (~30s per song)
+- 15 songs still have NO timing at all — need lrc-to-bars or direct Whisper sync
+
+**Remaining gap: Whisper scripts write old format**
+
+Both `sync-lyric-to-audio.py` and `verify-lyric-audio.py` use the OLD
+`@time=N @bar=N` prefix format. The chopro files were migrated to the NEW
+format (`##` headers, trailing `@N.N`). The scripts need updating:
+  1. `parse_chopro_lyrics()` — already handles `##` headers (skips them)
+  2. `parse_chopro_annotations()` — regex for `@time=N` only, needs trailing `@N.N` fallback
+  3. `sync-lyric-to-audio.py` line 207 — writes old `@time=N @bar=N` prefix, should write trailing `@N.N`
+  4. Add new-format detection same as hud.js: if file has `##` lines, use trailing `@N.N` output
 
 ---
 
