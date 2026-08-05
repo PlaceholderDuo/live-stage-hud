@@ -485,7 +485,7 @@ body {
       fetch(LOCAL_API + '/api/singer/queue?_=' + Date.now())
         .then(function(r) { return r.json(); })
         .then(function(data) {
-          state.submissions = (data.queue || []).map(function(e) {
+          state.submissions = (data.active_rotation || []).concat(data.waiting_list || []).map(function(e) {
             return {
               name: e.singer || 'Guest',
               song: e.song_title || '?',

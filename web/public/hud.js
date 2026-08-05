@@ -177,6 +177,7 @@
   }
 
   function parseChordPro(text) {
+    if (!text || typeof text !== 'string') return { lines: [], directives: {} };
     var lines = [];
     var directives = {};
     var rawLines = text.split("\n");
@@ -250,6 +251,7 @@
 
       // ── Content line ──
       var timeAnnot = null;
+      var barAnnot = null;
       var content = raw;
 
       if (isNewFormat) {
@@ -263,6 +265,8 @@
           var tmFallback = content.match(/@time\s*=\s*([\d]+\.?\d*)\s*/i);
           if (tmFallback) timeAnnot = parseFloat(tmFallback[1]);
         }
+        var bmNew = content.match(/@bar\s*=\s*(\d+)\s*/i);
+        if (bmNew) barAnnot = parseInt(bmNew[1], 10);
         content = content.replace(/@time\s*=\s*[\d]+\.?\d*\s*/gi, "")
                          .replace(/@bar\s*=\s*\d+\s*/gi, "")
                          .replace(/##\s+[^@]*?(?:\s*@[\d.]+)?$/, "")  // strip embedded ## headers
@@ -272,6 +276,8 @@
           content = content.substring(1, content.lastIndexOf("/")).trim();
         }
       } else {
+        var bmOld = raw.match(/@bar\s*=\s*(\d+)\s*/i);
+        if (bmOld) barAnnot = parseInt(bmOld[1], 10);
         content = raw.replace(/@time\s*=\s*[\d]+\.?\d*\s*/gi, "")
                      .replace(/@bar\s*=\s*\d+\s*/gi, "")
                      .replace(/\s+/g, " ").trim();
@@ -284,7 +290,7 @@
         type: currentType,
         label: currentLabel,
         _time: timeAnnot,
-        _bar: null,
+        _bar: barAnnot,
         _duration: currentDuration,
       });
     }

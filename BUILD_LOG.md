@@ -1987,3 +1987,309 @@ python3 tools/song-status.py --missing
 python3 tools/song-status.py --no-stems
 python3 tools/song-status.py --json > song-status.json
 ```
+
+---
+
+## 2026-08-04 — Post-Show TUI Bugfixes (Shift+S Toggle + 'a' Key)
+
+### Session: Fix two TUI issues reported after the show
+
+The show went well overall, but Danny reported two problems:
+
+1. **Hitting `a` to "add a song" did not work** — pressing `a` did nothing
+2. **Shift+S was either not working or unclear** — it didn't toggle the show state, and the teleprompter opened fullscreen lyrics as soon as the server started instead of waiting for Shift+S
+
+### Root Cause Analysis
+
+#### Bug 1: Missing 'a' keybinding
+
+`enterSearchMode('add')` at `tui.js:1068` was fully implemented — search by typing, arrow keys to select, Enter to add to queue — but **no key was bound to call it**. The switch statement in `handleInput()` had cases for `n` (next), `b` (prev), `Space` (play/pause), `m` (bumper), etc., but `a` (0x61) was simply missing.
+
+**Fix:** Added `case 0x61:` in `tui.js:1461` that calls `enterSearchMode('add')` when not in another mode.
+
+#### Bug 2: Shift+S didn't toggle the show — it stopped the HUD
+
+The state before this fix was confusing:
+
+| Key | What it did | Problem |
+|-----|-------------|---------|
+| `Shift+S` (0x53) | `hudPost('stop')` | Just stopped HUD playback. Didn't change show mode or run show-optimize. User expected it to start the show. |
+| `Shift+L` (0x4C) | Go to LIVE mode | Only worked if `showMode === 'connected'`. Hidden behind a different key. No toggle back. |
+
+Additionally:
+- `showMode` defaulted to `'live'` at line 114 (overridden by `--connect` flag in init, but the initial value was wrong)
+- The SETUP banner at line 616 still showed `[Shift+L] Go LIVE  [Shift+S] Stop HUD` — two separate keys for what should be one toggle
+- `start-show` had been patched to default to `connect` mode, but the mismatch between init and runtime defaults meant the teleprompter could still auto-open in live mode
+
+#### Bug 3: Teleprompter opened too early
+
+When `showMode` was `'live'` at startup, the TUI posted `{ mode: 'live' }` to the iPhone server during `init()`. The HUD browsers on the Dell and iPhones would connect and immediately start displaying lyrics — no "standby" phase. The teleprompter should stay blank until Shift+S is pressed.
+
+### What We Changed
+
+#### `tui.js` — Single Shift+S toggle
+
+**Before:**
+```
+case 0x53: // Shift+S — Stop HUD
+  hudPost('stop');
+  hudReaperPlaying = false;
+  statusMsg = 'HUD stopped';
+  break;
+
+case 0x4C: // Shift+L — Go LIVE
+  if (showMode === 'connected') {
+    showMode = 'live';
+    apiPost('/api/show-mode', { mode: 'live' });
+    execSync('bash show-optimize start');
+    render();
+  }
+  break;
+```
+
+**After — single toggle:**
+```
+case 0x53: // Shift+S — toggle LIVE / SETUP
+  if (showMode === 'live') {
+    showMode = 'connected';
+    hudPost('stop');
+    hudReaperPlaying = false;
+    execSync('bash show-optimize stop');
+    apiPost('/api/show-mode', { mode: 'connected' });
+    log('Show stopped — SETUP mode');
+    statusMsg = 'SETUP mode';
+  } else {
+    showMode = 'live';
+    execSync('bash show-optimize start');
+    apiPost('/api/show-mode', { mode: 'live' });
+    log('Show started — HUD LIVE');
+    statusMsg = 'LIVE — HUD active';
+  }
+  render();
+  break;
+// case 0x4C (Shift+L) — REMOVED, merged into Shift+S
+```
+
+#### Additional changes:
+
+| Change | Line | Before | After |
+|--------|------|--------|-------|
+| Default `showMode` | 114 | `'live'` | `'connected'` |
+| Setup banner | 616 | `[Shift+L] Go LIVE  [Shift+S] Stop HUD` | `[Shift+S] Start the show` |
+| Help bar key row | 786 | `[Shift+L] Go LIVE` (only when connected) | Always shows `[Shift+S] Go LIVE` or `LIVE — [Shift+S] Stop show` in green |
+| 'a' keybinding | 1461 | (missing) | `case 0x61: enterSearchMode('add')` |
+| 'add' API endpoint | 464 | `/api/queue/add` → `main_queue` (invisible) | `/api/band-queue/add` → `band_queue` (setlist) |
+
+#### Bug 3: Song "added" but didn't appear in queue
+
+Even after fixing the 'a' keybinding, the song wouldn't appear in the TUI's setlist. The `doAction('add', slug)` handler posted to `/api/queue/add`, which adds to `main_queue` — the server's internal rotation queue that the TUI **never displays**. The TUI shows `band_queue` (setlist view via Tab) and `singerQueue.queue` (singers view).
+
+**Fix:** Changed `doAction('add', ...)` to post to `/api/band-queue/add` instead. The song now appears in the TUI's setlist panel (switch to it with Tab).
+
+#### Second commit:
+```
+TUI: fix 'add' song routing — add to band_queue (setlist) not invisible main_queue
+```
+
+#### Initialization flow (unchanged, now correct by default):
+
+```
+start show server → start-show connect → tui.js --connect
+  → showMode = 'connected' (line 1577)
+  → apiPost('/api/show-mode', { mode: 'connected' }) (line 1616)
+  → HUD browsers connect → blank screen (no song loaded, no playback)
+  → TUI shows: [SETUP]  [Shift+S] Start the show
+```
+
+### Commit
+
+```
+TUI: Shift+S toggles SETUP / LIVE (combine Shift+L+Shift+S into one toggle)
++ add 'a' keybinding to open add-song search
+```
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `~/Music/iPhoneLiveServer/scripts/tui.js` | `case 0x61` add-song key, `case 0x53` toggle rewrite, removed `case 0x4C`, help bar, default `showMode`, setup banner |
+| `BUILD_LOG.md` | This entry |
+
+### Key Commands (Quick Reference)
+
+```
+start show server          # Starts everything in SETUP mode (teleprompter blank)
+Shift+S (in TUI)           # Toggle SETUP ↔ LIVE (green badge, show-optimize runs)
+a (in TUI)                 # Search & add song to queue
+v (in TUI)                 # Pre-show verification checklist
+```
+
+---
+
+## 2026-08-04 (Session 2) — Deep TUI Bug Hunt: Plumb the Play Flow
+
+### Session: Trace every code path from "add song" to "song playing on HUD"
+
+Danny reported that pressing Enter on a setlist song didn't start it. We did a deep audit of the full play flow, tracing from key press through queue API through LSM bridge to WebSocket broadcast. Found 7 bugs, fixed 3 critical.
+
+### Root Cause Analysis
+
+The TUI has **two separate queue systems** that must stay in sync:
+
+| Queue | Server store | TUI display | How songs get in |
+|-------|-------------|-------------|-----------------|
+| `main_queue` | Singer rotation (interleaved singers + band) | NOT displayed | Singer adds, band promotion |
+| `band_queue` | The setlist | SETLIST panel (Tab to switch) | `a` key → `/api/band-queue/add` |
+
+And **two separate playback engines**:
+
+| Engine | Control | Tracks position? | Controls HUD lyrics? |
+|--------|---------|------------------|---------------------|
+| Queue engine (:3300) | `/api/queue/play`, `start-setlist`, `load-next` | Sets `current_song` + `status` | No — just state |
+| LSM local engine (:3000) | `hudPost('play')`, `hudPost('load')` | Yes — 30fps tick loop | Yes — WebSocket broadcast |
+
+**Both must be called together for a song to play.** The TUI's Space bar does this correctly; other paths were broken.
+
+#### Bug 1 (Critical): Enter key dead — no case in switch
+
+The help bar displayed `[Enter] Play Now` when focus was on the setlist panel, but Enter (`0x0D`, `ch === 13`) had **zero cases** in the `handleInput()` switch statement. The only Enter handlers were in modal modes (search input, setlist picker, export, settings) — none in normal mode for queue interaction.
+
+**Full code trace of Enter (0x0D):**
+
+| Handler location | Mode guard | What it does |
+|-----------------|------------|-------------|
+| Line ~1140 | `nameInputMode` | Confirms singer name after picking a song |
+| Line ~1165 | `inputMode` (search) | Confirms song selection → `doAction('add', slug)` |
+| Line ~1268 | `setlistMode` | Selects a preset setlist → `doAction('import-setlist')` |
+| Line ~1300 | `exportMode` | Saves export name → `doAction('export-setlist')` |
+| Line ~1322 | `settingsMode` | Starts editing or toggles karaoke |
+| **Normal mode** | **None** | **DEAD — nothing happens** |
+
+The missing "play now" endpoint didn't exist either. There was `play-now` in `doAction` but it only called `/api/band-queue/promote` — moving the song into `main_queue` without loading or playing it. No HUD integration.
+
+**Fix:** Created `play-band-now` action (full chain) + Enter key binding:
+
+```javascript
+case 'play-band-now':
+  // 1. Promote from band_queue → main_queue (inserted after current song)
+  await apiPost('/api/band-queue/promote', { index: arg });
+  // 2. Load it as current_song
+  const r = await apiPost('/api/queue/load-next');
+  // 3. Start queue playback
+  await apiPost('/api/queue/play');
+  // 4. Push setlist + load song in LSM + start HUD
+  await hudPost('setlist', { songs });
+  await hudPost('load', { title: song.title });
+  await hudPost('play');
+```
+
+```javascript
+case 0x0D: // Enter — Play Now (setlist view)
+  if (focus === 'queue' && queueView !== 'singers') {
+    doAction('play-band-now', bandCursor);
+  }
+```
+
+**Edge cases handled:**
+- Nothing loaded yet (current_index = -1): promote inserts at main_queue[0], load-next starts fresh → works
+- Song already playing: promote inserts after current, load-next advances → jumps to selected song
+- Cursor bounds: `refreshState()` adjusts `bandCursor` after the queue shrinks from promote
+
+#### Bug 2 (Critical): `a` key wasn't context-aware
+
+The help bar showed `[a] Add Singer` in singers view and `[a] Add Song` in setlist view, but the key always called `enterSearchMode('add')` (add to setlist). In singers view, it should open the singer-add flow (search song → prompt singer name → add to singer queue).
+
+**Fix:** `a` now checks panel focus:
+
+```javascript
+case 0x61: // a — add song/singer (context-aware)
+  if (focus === 'queue' && queueView === 'singers')
+    enterSearchMode('add-singer');
+  else
+    enterSearchMode('add');
+```
+
+#### Bug 3 (Critical): Add-song went to invisible `main_queue`
+
+When the 'a' key was first added (earlier session), `doAction('add', slug)` posted to `/api/queue/add` which adds to `main_queue` — the server's internal rotation queue that the TUI **never displays**. The TUI only shows `band_queue` (setlist) and `singerQueue.queue` (singers). The log said "Added: Song Name" but the song appeared nowhere.
+
+**Fix (previous commit):** Changed `doAction('add')` to use `/api/band-queue/add` instead of `/api/queue/add`.
+
+#### Bug 4: Search modal rendering corruption
+
+The search modal was full-width (`w - 3`) and didn't clear the screen properly. When exiting search, old modal borders and text bled into the main TUI display because `render()` didn't include `CLS`.
+
+**Fix (previous commits):**
+- `renderSearch()` now uses a centered modal box (`Math.min(w - 24, w - 4)` wide) with ANSI-safe text clipping
+- `render()` now includes `CLS` (clear screen) — writes entire frame atomically, no flicker
+- `drawBox()` hardened against negative padding (title wider than box)
+
+#### Bug 5: `drawText` wrapping on small terminals
+
+Long text in `drawText()` would wrap to the next line when the terminal was narrow, and `ESC + '0K'` only clears to end of the CURRENT line — wrapped text on the next row remained visible.
+
+**Fix:** Reverted global `drawText` clip attempt (caused side effects) and instead made `renderSearch()` self-contained with its own ANSI-aware `clip()` helper that measures visible length (strips escape codes before comparing).
+
+#### Bugs Found — Not Yet Fixed (Lower Priority)
+
+| # | Bug | Why not fixed |
+|---|-----|--------------|
+| 4 | `Shift+B` (0x42) used for BOTH kick singer AND HUD prev song | Guards prevent collision (singers check runs first), works correctly |
+| 5 | `Shift+P` (0x50) used for BOTH promote singer AND HUD play/pause | Same — singers check prevents collision |
+| 6 | Duplicate `case 0x49` (I key — import setlist) — second match was dead code | Removed alongside the Enter fix |
+
+### Architecture Insight: The Dual-Engine Problem
+
+The system has **two independent playback states** that the TUI must coordinate:
+
+```
+Queue Engine (:3300)                    LSM Engine (:3000)
+─────────────────────                   ─────────────────
+current_song: {slug, title}            currentSong: "Song Name"
+status: 'playing' | 'loaded' | 'stopped'   playing: true | false
+current_index: N                        position: 42.3s
+                                          duration: 180.0s
+                                          bpm: 120
+                                          sections: [...]
+                                          lyricLines: [...]
+```
+
+The TUI is the **orchestrator** — it must call both systems in sequence:
+1. Queue engine: load the right song, set status
+2. LSM engine: load the song data (meta.json, chopro), start the 30fps tick loop
+3. WebSocket broadcast: pushes state to all HUD clients (Dell, iPhones)
+
+Every "play" action in the TUI must touch both. The Space bar already did this correctly. Enter was never wired in.
+
+### Commits
+
+```
+TUI: add 'a' keybinding to open add-song search
+TUI: fix 'add' song routing — add to band_queue (setlist) not invisible main_queue
+TUI: Shift+S toggles SETUP / LIVE (combine Shift+L+Shift+S into one toggle)
+TUI: clear screen before rendering search modal (was overlaying on main TUI)
+TUI: clip drawText to terminal width to prevent line wrapping
+TUI: revert global drawText clip, fix search modal with centered box + safe ANSI-aware clipping
+TUI: add CLS to render() and protect drawBox from negative padding/overflow
+TUI: Enter = Play Now from setlist, 'a' context-aware, remove duplicate I key
+```
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `~/Music/iPhoneLiveServer/scripts/tui.js` | `case 0x0D` Enter play-now, `case 0x61` context-aware, `play-band-now` action (promote→load→play→HUD), render CLS, centered search modal, drawBox hardening, showMode default, Shift+S toggle, removed Shift+L + dead I key |
+| `BUILD_LOG.md` | This entry (two sessions) |
+
+### Key Commands (Updated Quick Reference)
+
+```
+start show server              # Starts everything in SETUP mode (teleprompter blank)
+Shift+S (in TUI)               # Toggle SETUP ↔ LIVE (green badge, show-optimize runs)
+a (in TUI)                     # Context-aware: Add Singer (singers view) or Add Song (setlist)
+Enter (on setlist song)        # Play that song NOW (promotes → loads → starts HUD)
+Space (in TUI)                 # Start/stop the queue + HUD playback
+n / b (in TUI)                 # Next / Previous song
+Tab (in TUI)                   # Toggle singers ↔ setlist panel
+v (in TUI)                     # Pre-show verification checklist
+```
