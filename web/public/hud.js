@@ -58,6 +58,14 @@
   var hudNotes = $("hudNotes");
   var notesTimeout = null;
 
+  // Tempo sync config
+  var beat1Color = null;
+  var beatColor = '#2ecc71';
+  var BEAT_HEX = {
+    red: '#e74c3c', blue: '#3498db', purple: '#9b59b6', white: '#ffffff',
+    orange: '#ff8800', green: '#2ecc71'
+  };
+
   // ── State ──
   var currentSongId = null;
   var parsedLines = [];
@@ -960,11 +968,14 @@
       var el = $("beat" + i);
       if (el) {
         if (i === beat) {
+          var bcol = (i === 1 && beat1Color) ? beat1Color : beatColor;
           el.style.color = "#000000";
+          el.style.background = bcol;
           el.style.fontWeight = "900";
           el.style.opacity = "1.0";
         } else {
           el.style.color = "#cccccc";
+          el.style.background = "";
           el.style.fontWeight = "400";
           el.style.opacity = "0.25";
         }
@@ -974,11 +985,16 @@
     // Metronome flasher (bottom right corner)
     var metronome = $("metronomeDot");
     if (metronome) {
-      if (beat === 1) {
-        metronomeDot.className = "pulse";
-      } else {
-        metronomeDot.className = "";
-      }
+      var mcol = (beat === 1 && beat1Color) ? beat1Color : beatColor;
+      metronome.style.background = mcol;
+      metronome.style.boxShadow = '0 0 10px ' + mcol;
+      metronome.classList.add('pulse');
+      clearTimeout(metronome._pulseTimer);
+      metronome._pulseTimer = setTimeout(function () {
+        metronome.classList.remove('pulse');
+        metronome.style.background = '#333';
+        metronome.style.boxShadow = '';
+      }, 80);
     }
   }
 
@@ -1182,13 +1198,18 @@
       statusText.className = "status-dot connected";
       isFirstSong = true;
       lastSongId = null;
-      // Fetch chord color mode from show server config
-      fetch('http://' + window.location.hostname + ':3300/api/config/teleprompter')
+      // Fetch tempo sync config from show server
+      fetch('http://' + window.location.hostname + ':3300/api/config/tempo-sync')
         .then(function(r) { return r.json(); })
         .then(function(cfg) {
-          if (cfg && cfg.chord_color_mode) chordColorMode = cfg.chord_color_mode;
+          if (cfg.beat1_behavior && cfg.beat1_behavior !== 'no_distinction') {
+            beat1Color = BEAT_HEX[cfg.beat1_behavior] || null;
+          } else {
+            beat1Color = null;
+          }
+          beatColor = BEAT_HEX[cfg.beat_color] || '#2ecc71';
         })
-        .catch(function() { /* keep default */ });
+        .catch(function() { /* keep defaults */ });
     });
 
     socket.on("disconnect", function () {

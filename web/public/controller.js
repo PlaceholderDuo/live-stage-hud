@@ -48,6 +48,17 @@
     orange: '#ff8800', green: '#2ecc71'
   };
 
+  var chordColorMode = 'circle';
+
+  function fetchTeleprompterConfig() {
+    fetch('http://' + window.location.hostname + ':3300/api/config/teleprompter')
+      .then(function(r) { return r.json(); })
+      .then(function(cfg) {
+        if (cfg && cfg.chord_color_mode) chordColorMode = cfg.chord_color_mode;
+      })
+      .catch(function() { /* keep default */ });
+  }
+
   function fetchTempoSyncConfig() {
     fetch('http://' + window.location.hostname + ':3300/api/config/tempo-sync')
       .then(function(r) { return r.json(); })
@@ -2830,12 +2841,7 @@
         '<div class="lyrics-help-overlay" id="lyrics-help-overlay" style="display:none;">' +
           '<div class="lyrics-help-box">' +
             '<div class="lyrics-help-box-title">Chord Colors</div>' +
-            '<div class="lyrics-help-legend">' +
-              '<div class="lyrics-help-row"><span class="chord-dot" style="background:#f1c40f;"></span><span class="chord-dot-label">Yellow</span><span class="chord-dot-desc">Major chords</span><span class="chord-dot-ex">A, D7, Gmaj7</span></div>' +
-              '<div class="lyrics-help-row"><span class="chord-dot" style="background:#3498db;"></span><span class="chord-dot-label">Blue</span><span class="chord-dot-desc">Minor chords</span><span class="chord-dot-ex">Am, Bm7, F#m9</span></div>' +
-              '<div class="lyrics-help-row"><span class="chord-dot" style="background:#ff8800;"></span><span class="chord-dot-label">Orange</span><span class="chord-dot-desc">Power chords</span><span class="chord-dot-ex">A5, D5, E5</span></div>' +
-              '<div class="lyrics-help-row"><span class="chord-dot" style="background:#9b59b6;"></span><span class="chord-dot-label">Purple</span><span class="chord-dot-desc">Complex</span><span class="chord-dot-ex">Bdim7, Caug, D7b9</span></div>' +
-            '</div>' +
+           '<div class="lyrics-help-legend" id="lyrics-help-legend"></div>' +
             '<label class="lyrics-help-check"><input type="checkbox" id="lyrics-chk-overlay"> Show chord color help on Teleprompter</label>' +
             '<label class="lyrics-help-check"><input type="checkbox" id="lyrics-chk-default"> Display chord help by default</label>' +
             '<button class="lyrics-help-close" id="lyrics-help-close">Close</button>' +
@@ -2874,6 +2880,7 @@
         overlay.style.display = 'flex';
         chkOverlay.checked = lyricsShowChordHelp;
         chkDefault.checked = lyricsChordHelpDefault;
+        renderChordHelpLegend();
       });
       document.getElementById('lyrics-help-close').addEventListener('click', function () {
         overlay.style.display = 'none';
@@ -2897,6 +2904,37 @@
           sendCommand('chord_help_toggle', { enabled: true });
         }
       });
+
+      function renderChordHelpLegend() {
+        var legendEl = document.getElementById('lyrics-help-legend');
+        if (!legendEl) return;
+        if (chordColorMode === 'circle') {
+          var rows = [
+            { color: '#ff3333', note: 'C / C#', desc: 'Root / Leading tone' },
+            { color: '#ff8800', note: 'D', desc: 'Supertonic' },
+            { color: '#ffaa00', note: 'D# / Eb', desc: 'Mediant' },
+            { color: '#ffdd00', note: 'E', desc: 'Subdominant' },
+            { color: '#33cc66', note: 'F', desc: 'Dominant' },
+            { color: '#1abc9c', note: 'F# / Gb', desc: 'Submediant' },
+            { color: '#3399ff', note: 'G', desc: 'Leading tone' },
+            { color: '#5b6abf', note: 'G# / Ab', desc: 'Tonic relative' },
+            { color: '#9933ff', note: 'A', desc: 'Minor relative' },
+            { color: '#cc33ff', note: 'A# / Bb', desc: 'Subtonic' },
+            { color: '#ff3399', note: 'B', desc: 'Chromatic' },
+          ];
+          legendEl.innerHTML = '<div class="lyrics-help-row"><span class="chord-dot-label" style="font-weight:700;margin-bottom:6px;">CIRCLE OF 5THS</span></div>' +
+            rows.map(function(r) {
+              return '<div class="lyrics-help-row"><span class="chord-dot" style="background:' + r.color + ';"></span><span class="chord-dot-label">' + r.note + '</span><span class="chord-dot-desc">' + r.desc + '</span></div>';
+            }).join('');
+        } else {
+          legendEl.innerHTML =
+            '<div class="lyrics-help-row"><span class="chord-dot-label" style="font-weight:700;margin-bottom:6px;">CHORD FLAVOR</span></div>' +
+            '<div class="lyrics-help-row"><span class="chord-dot" style="background:#f1c40f;"></span><span class="chord-dot-label">Yellow</span><span class="chord-dot-desc">Major chords</span><span class="chord-dot-ex">A, D7, Gmaj7</span></div>' +
+            '<div class="lyrics-help-row"><span class="chord-dot" style="background:#3498db;"></span><span class="chord-dot-label">Blue</span><span class="chord-dot-desc">Minor chords</span><span class="chord-dot-ex">Am, Bm7, F#m9</span></div>' +
+            '<div class="lyrics-help-row"><span class="chord-dot" style="background:#ff8800;"></span><span class="chord-dot-label">Orange</span><span class="chord-dot-desc">Power chords</span><span class="chord-dot-ex">A5, D5, E5</span></div>' +
+            '<div class="lyrics-help-row"><span class="chord-dot" style="background:#9b59b6;"></span><span class="chord-dot-label">Purple</span><span class="chord-dot-desc">Complex</span><span class="chord-dot-ex">Bdim7, Caug, D7b9</span></div>';
+        }
+      }
 
       // Auto-enable chord help on boot if default is set
       if (lyricsChordHelpDefault && !lyricsShowChordHelp) {
@@ -2998,6 +3036,7 @@
     startBeatLoop();
     connectSocketIO();
     fetchTempoSyncConfig();
+    fetchTeleprompterConfig();
     navigateTo('home');
   }
 

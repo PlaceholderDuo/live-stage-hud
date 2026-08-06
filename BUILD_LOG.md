@@ -2706,3 +2706,124 @@ Comprehensive NASA-style audit of all 3 servers (~3440 LOC total) across 9 categ
 | 30fps tick wastes CPU idle | Fixed | Interval clears on stop |
 | Directory traversal reads secrets | Fixed | `..` / `/` / `\` rejected |
 | Setlist name deletes config | Fixed | `path.resolve` prefix guard |
+
+---
+
+## 2026-08-05 (Session 5) — Chord Color Mode: Circle of 5ths vs. Chord Flavor
+
+### Session: User-configurable chord coloring mode with TUI settings toggle
+
+Danny added a new "Chord Flavor" color system (Major=yellow, Minor=blue, Power=orange, Complex=purple) in a parallel session via the iPhone controller. We needed to mirror it in the HUD while preserving the original Circle of Fifths coloring as an option. The solution: a settings toggle in the TUI that switches between both modes, persisted to config, and automatically picked up by the HUD on connect.
+
+### Design Decision: Two Modes, Configurable
+
+The old system colored chords by root note (Circle of Fifths):
+- C=red, D=orange, E=yellow, F=green, G=blue, A=purple, B=pink
+- Shows harmonic relationship between chords
+- Useful for musicians who think in key centers
+
+The new system colors by chord type:
+- Major (A, D7, Gmaj7, Csus4) = yellow `#f1c40f`
+- Minor (Am, Bm7, F#m9) = blue `#3498db`
+- Power (A5, D5, E5) = orange `#ff8800`
+- Complex (Bdim7, Caug, D7b9) = purple `#9b59b6`
+- Shows chord quality at a glance
+- Useful for singers who need to know minor vs. major instantly
+
+Both are valid. Let the user choose.
+
+### Implementation
+
+#### 1. Config API — `chord_color_mode` in teleprompter endpoints
+
+**File:** `iPhoneLiveServer/server/api/auth.js:87-108`
+
+Added `chord_color_mode` to the teleprompter config GET/POST endpoints. Default is `'circle'` for new configs, but Danny's config file is set to `'flavor'`. Validation restricts values to `'circle'` or `'flavor'`:
+
+```javascript
+// GET: returns chord_color_mode (defaults to 'circle')
+const defaults = { chord_color_mode: 'circle', ... };
+res.json(Object.assign({}, defaults, cfg.teleprompter || {}));
+
+// POST: validates value
+if (chord_color_mode !== undefined && (chord_color_mode === 'circle' || chord_color_mode === 'flavor')) {
+  cfg.teleprompter.chord_color_mode = chord_color_mode;
+}
+```
+
+#### 2. config.json — Default to Chord Flavor
+
+**File:** `iPhoneLiveServer/data/config.json`
+
+```json
+"teleprompter": {
+    "chord_color_mode": "flavor"
+}
+```
+
+#### 3. TUI Settings Menu — New toggle row
+
+**File:** `iPhoneLiveServer/scripts/tui.js`
+
+Added a new settings row "Chord colors" between bumper volume and karaoke mode. Shows current mode with colored label:
+
+```javascript
+const chordColorLabel = telepromptConfig.chord_color_mode === 'flavor'
+  ? (BLUE + 'Chord Flavor' + RESET)
+  : (YELLOW + 'Circle of 5ths' + RESET);
+```
+
+Enter immediately toggles modes, saves to server via `saveTelepromptConfig()`:
+
+```javascript
+telepromptConfig.chord_color_mode = telepromptConfig.chord_color_mode === 'flavor' ? 'circle' : 'flavor';
+saveTelepromptConfig();
+```
+
+Settings box expanded from height 9 → 10 rows. Cursor order: `max_songs → bumper_vol → chord_color → karaoke`.
+
+Config is refreshed every 2 seconds via `refreshTelepromptConfig()`, which reads `cfg.chord_color_mode` from the teleprompter config endpoint.
+
+#### 4. HUD — Dual coloring engines
+
+**File:** `live-stage-hud/web/public/hud.js`
+
+Kept both coloring functions. `getChordColor()` acts as dispatcher:
+
+```javascript
+var chordColorMode = 'circle'; // default
+
+function getChordColor(chord) {
+  if (chordColorMode === 'circle') return getChordRootColor(chord);
+  var type = classifyChord(chord).type;
+  var colors = { major: '#f1c40f', minor: '#3498db', power: '#ff8800', complex: '#9b59b6' };
+  return colors[type] || colors.major;
+}
+
+function getChordRootColor(chord) { /* Circle of 5ths root-note map */ }
+function classifyChord(chordText) { /* type classifier: power/complex/minor/major */ }
+```
+
+On WebSocket connect, fetches the config from iPhoneLiveServer:
+
+```javascript
+socket.on("connect", function () {
+  fetch('http://' + window.location.hostname + ':3300/api/config/teleprompter')
+    .then(function(r) { return r.json(); })
+    .then(function(cfg) {
+      if (cfg && cfg.chord_color_mode) chordColorMode = cfg.chord_color_mode;
+    });
+});
+```
+
+On fetch failure (server down, network issue), keeps the default `'circle'` — no crash.
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `iPhoneLiveServer/server/api/auth.js` | Added `chord_color_mode` to teleprompter GET/POST endpoints with validation |
+| `iPhoneLiveServer/data/config.json` | `chord_color_mode: "flavor"` in teleprompter section |
+| `iPhoneLiveServer/scripts/tui.js` | Settings row + toggle, refresh function, save function, cursor order |
+| `live-stage-hud/web/public/hud.js` | Dual chord coloring engines, config fetch on connect, dispatcher function |
+| `BUILD_LOG.md` | This entry |
