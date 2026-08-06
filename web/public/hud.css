@@ -225,7 +225,7 @@ html, body {
   display: block;
   font-size: 2.4rem; /* chords slightly larger */
   font-weight: 800;
-  color: #ffff00; /* bright warning yellow chords — overridden by JS for root color */
+  color: #f1c40f; /* yellow — major chord fallback, overridden by JS for type-specific color */
   line-height: 1.1;
   white-space: pre;
   text-shadow: 0 0 3px rgba(255,255,255,0.4);

@@ -479,24 +479,36 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // FEATURE 2: 12-Color Chord Coloring (Circle of Fifths)
+  // CHORD COLORING — Type-based (Major/Minor/Power/Complex)
   // ═══════════════════════════════════════════════════════════
 
-  function getChordRootColor(chord) {
+  function getChordColor(chord) {
     if (!chord) return null;
-    var root = chord.match(/^[A-G][b#]?/);
-    if (!root) return null;
-    root = root[0];
-    var map = {
-      'C': '#ff3333', 'C#': '#ff6b35', 'Db': '#ff6b35',
-      'D': '#ff8800', 'D#': '#ffaa00', 'Eb': '#ffaa00',
-      'E': '#ffdd00',
-      'F': '#33cc66', 'F#': '#1abc9c', 'Gb': '#1abc9c',
-      'G': '#3399ff', 'G#': '#5b6abf', 'Ab': '#5b6abf',
-      'A': '#9933ff', 'A#': '#cc33ff', 'Bb': '#cc33ff',
-      'B': '#ff3399'
-    };
-    return map[root] || null;
+    var type = classifyChord(chord).type;
+    var colors = { major: '#f1c40f', minor: '#3498db', power: '#ff8800', complex: '#9b59b6' };
+    return colors[type] || colors.major;
+  }
+
+  function classifyChord(chordText) {
+    var text = chordText.trim();
+    if (!text) return { type: 'major', root: text, flavor: '' };
+    // Power chord: contains '5' and no 'm'
+    if (/5/.test(text) && !/[a-g]m/i.test(text)) {
+      return { type: 'power', root: text, flavor: '' };
+    }
+    // Complex: dim, aug, +, m7b5, °, ø, alt
+    if (/dim|aug|\+|m7b5|°|ø|alt/i.test(text)) {
+      var rt = text.replace(/dim.+$|aug.*$|\+.+|m7b5.*$|°.*$|ø.*$|alt.*$/i, '');
+      return { type: 'complex', root: rt || text, flavor: text.slice(rt.length) };
+    }
+    // Minor: contains 'm' but NOT 'maj' or 'dim'
+    if (/[a-g]m/i.test(text) && !/maj/i.test(text) && !/dim/i.test(text)) {
+      var m = text.match(/^[A-G][#b]?/i);
+      return { type: 'minor', root: m ? m[0] : text, flavor: text.slice(m ? m[0].length : 0) };
+    }
+    // Major: everything else (A, D7, Gmaj7, Csus4, etc.)
+    var r = text.match(/^[A-G][#b]?/i);
+    return { type: 'major', root: r ? r[0] : text, flavor: text.slice(r ? r[0].length : 0) };
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -516,7 +528,7 @@
       chordEl.className = pair.chord ? "chord" : "chord empty";
       chordEl.textContent = pair.chord ? "[" + pair.chord + "]" : "\u00A0";
       if (pair.chord) {
-        var c = getChordRootColor(pair.chord);
+        var c = getChordColor(pair.chord);
         if (c) chordEl.style.color = c;
       }
       pairEl.appendChild(chordEl);

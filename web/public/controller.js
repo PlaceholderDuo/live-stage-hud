@@ -411,6 +411,26 @@
           <div class="transport-play-state" id="transport-play-state">\u25B6</div>
         </div>
 
+        <div class="perf-strip" id="perf-strip">
+          <div class="perf-vol-group" id="perf-vol-vox">
+            <div class="perf-vol-label">VOX</div>
+            <div class="perf-vol-track" id="perf-vox-track">
+              <div class="perf-vol-fill" id="perf-vox-fill" style="width:70%;"></div>
+            </div>
+          </div>
+          <div class="perf-vol-group" id="perf-vol-gtr">
+            <div class="perf-vol-label">GTR</div>
+            <div class="perf-vol-track" id="perf-gtr-track">
+              <div class="perf-vol-fill" id="perf-gtr-fill" style="width:70%;"></div>
+            </div>
+          </div>
+          <div class="tele-controls">
+            <button class="tele-btn tele-rewind" id="tele-btn-left" title="Rewind / Restart Section">\u23EE\u23EE</button>
+            <button class="tele-btn tele-pause" id="tele-btn-third" title="Pause / 3rd Button">\u23F8</button>
+            <button class="tele-btn tele-skip" id="tele-btn-right" title="Skip / Next Section">\u23ED\u23ED</button>
+          </div>
+        </div>
+
         <div class="home-grid">
           <div class="home-btn mute-btn live" id="btn-mute">
             <span class="home-btn-label" id="mute-label">LIVE</span>
@@ -448,8 +468,8 @@
           </div>
 
           <div class="home-btn" id="btn-gtr-fx" style="border-color: #9b59b6;">
-            <span class="home-btn-label" style="color: #9b59b6;">GTR FX</span>
-            <span class="home-btn-sub">Delay & mod</span>
+            <span class="home-btn-label" style="color: #9b59b6;">FX Ctrl</span>
+            <span class="home-btn-sub">GTR & VOX FX</span>
           </div>
 
           <div class="home-btn keys-btn ${state.keysOn ? 'on' : 'off'}" id="btn-keys">
@@ -554,7 +574,7 @@
       });
 
       document.getElementById('btn-gtr-fx').addEventListener('click', function () {
-        navigateTo('gtr-fx');
+        navigateTo('perf-fx');
       });
 
       document.getElementById('btn-gtr-amp').addEventListener('click', function () {
@@ -610,7 +630,41 @@
       });
 
       document.getElementById('btn-teleprompter').addEventListener('click', function () {
-        navigateTo('teleprompter');
+        navigateTo('lyrics');
+      });
+
+      // Teleprompter scroll controls
+      document.getElementById('tele-btn-left').addEventListener('click', function () {
+        sendCommand('tele_action', { button: 'left' });
+        flashTeleBtn(this);
+      });
+      document.getElementById('tele-btn-third').addEventListener('click', function () {
+        sendCommand('tele_action', { button: 'third' });
+        flashTeleBtn(this);
+      });
+      document.getElementById('tele-btn-right').addEventListener('click', function () {
+        sendCommand('tele_action', { button: 'right' });
+        flashTeleBtn(this);
+      });
+
+      function flashTeleBtn(btn) {
+        btn.style.background = '#2a3a2a';
+        setTimeout(function () { btn.style.background = ''; }, 150);
+      }
+
+      // Volume sliders
+      ['vox','gtr'].forEach(function (ch) {
+        var track = document.getElementById('perf-' + ch + '-track');
+        var group = document.getElementById('perf-vol-' + ch);
+        if (track) {
+          track.addEventListener('click', function (e) {
+            var rect = track.getBoundingClientRect();
+            var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            var fill = group.querySelector('.perf-vol-fill');
+            if (fill) fill.style.width = (pct * 100) + '%';
+            sendCommand('volume_set', { track: ch, level: Math.round(pct * 32) });
+          });
+        }
       });
     },
 
@@ -629,6 +683,7 @@
       updateHomeHeader();
       updateSyncBadge(msg);
       updateHomeKnobValues();
+      updatePerfVolumes(msg);
     },
   });
 
@@ -661,6 +716,36 @@
       var key = state.songKey || '';
       meta.textContent = artist ? (artist + (key ? '  \u00B7  ' + key : '')) : '';
     }
+  }
+
+  function updatePerfVolumes(msg) {
+    var vols = msg ? (msg.trackVolumes || state.trackVolumes) : state.trackVolumes;
+    var names = msg ? (msg.trackNames || state.trackNames) : state.trackNames;
+
+    function findTrack(patterns) {
+      for (var key in names) {
+        var name = (names[key] || '').toLowerCase();
+        for (var i = 0; i < patterns.length; i++) {
+          if (name.indexOf(patterns[i]) >= 0) return parseInt(key);
+        }
+      }
+      return null;
+    }
+
+    var voxTrack = findTrack(['vox', 'vocal', 'voice', 'voc']) || 7;
+    var gtrTrack = findTrack(['gtr', 'guitar', 'git']) || 6;
+
+    function setFill(id, trackNum) {
+      var fill = document.getElementById(id);
+      if (!fill) return;
+      var v = vols[trackNum] || vols[String(trackNum)];
+      if (v === undefined || v === null || v <= 0) { fill.style.width = '0%'; return; }
+      var pct = Math.min(100, Math.max(0, v * 100));
+      fill.style.width = pct + '%';
+    }
+
+    setFill('perf-vox-fill', voxTrack);
+    setFill('perf-gtr-fill', gtrTrack);
   }
 
   function updateSectionDisplay() {
@@ -1085,6 +1170,189 @@
       }
     },
   });
+
+  // ════════════════════════════════════════════════════════
+  // ─── PAGE: PERF-FX (Dual-Channel GTR/VOX) ─────────────
+  // ════════════════════════════════════════════════════════
+
+  var perfFX = {
+    channel: 'gtr',
+    gtr: { volume: 24, fx: { 0: { preset: 1, bank: 0, enabled: true }, 1: { preset: 1, bank: 0, enabled: true }, 2: { preset: 1, bank: 0, enabled: true }, 3: { preset: 1, bank: 0, enabled: true } } },
+    vox: { volume: 24, fx: { 0: { preset: 1, bank: 0, enabled: true }, 1: { preset: 1, bank: 0, enabled: true }, 2: { preset: 1, bank: 0, enabled: true }, 3: { preset: 1, bank: 0, enabled: true } } },
+  };
+
+  var FX_DEFS = [
+    { id: 0, name: 'Delay', gtrName: 'Delay', voxName: 'Delay' },
+    { id: 1, name: 'Harmony', gtrName: 'Harmony', voxName: 'Harmony' },
+    { id: 2, name: 'Amp+Drive', gtrName: 'Amp & Drive', voxName: 'Drive & Filter' },
+    { id: 3, name: 'Tremolo', gtrName: 'Tremolo', voxName: 'Misc / SFX' },
+  ];
+
+  registerPage('perf-fx', {
+    render: function (container) {
+      container.innerHTML =
+        '<div class="perf-fx-header">' +
+          '<h2 class="perf-fx-title">FX Control</h2>' +
+          '<button class="perf-fx-return" id="perf-fx-return">\u2190 Back</button>' +
+        '</div>' +
+        '<div class="perf-fx-tabs">' +
+          '<button class="perf-fx-tab active" id="fx-tab-gtr">GTR</button>' +
+          '<button class="perf-fx-tab" id="fx-tab-vox">VOX</button>' +
+        '</div>' +
+        '<div class="perf-fx-vol">' +
+          '<span class="perf-fx-vol-label" id="fx-vol-label">GTR Vol</span>' +
+          '<div class="perf-fx-vol-track" id="fx-vol-track">' +
+            '<div class="perf-fx-vol-fill" id="fx-vol-fill" style="width:75%"></div>' +
+          '</div>' +
+          '<span class="perf-fx-vol-val" id="fx-vol-val">24</span>' +
+        '</div>' +
+        '<div class="perf-fx-blocks" id="perf-fx-blocks"></div>';
+    },
+
+    onActivate: function (container) {
+      document.getElementById('perf-fx-return').addEventListener('click', function () {
+        navigateTo('home');
+      });
+
+      document.getElementById('fx-tab-gtr').addEventListener('click', function () {
+        perfFX.channel = 'gtr';
+        renderFXBlocks();
+        updateFXTabUI();
+      });
+      document.getElementById('fx-tab-vox').addEventListener('click', function () {
+        perfFX.channel = 'vox';
+        renderFXBlocks();
+        updateFXTabUI();
+      });
+
+      // Volume slider
+      var volTrack = document.getElementById('fx-vol-track');
+      volTrack.addEventListener('click', function (e) {
+        var rect = volTrack.getBoundingClientRect();
+        var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        perfFX[perfFX.channel].volume = Math.round(pct * 32);
+        updateFXVolUI();
+        sendFXCommand(perfFX.channel, 'volume', perfFX[perfFX.channel].volume);
+      });
+
+      setKnobLabels({
+        1: { name: 'DELAY', value: '--', color: '#1abc9c' },
+        2: { name: 'HARMONY', value: '--', color: '#9b59b6' },
+        3: { name: 'AMP', value: '--', color: '#ff8800' },
+        4: { name: 'TREM', value: '--', color: '#f1c40f' },
+      });
+
+      renderFXBlocks();
+      updateFXTabUI();
+    },
+
+    onState: function (msg) {
+      // Update FX knob values from OSC feedback
+      if (msg.fxParams) {
+        // Map known param indices to FX knobs
+        var vals = {};
+        if (msg.fxParams['6-0-0'] !== undefined) vals[1] = Math.round(msg.fxParams['6-0-0'] * 100) + '%'; // GTR delay
+        if (msg.fxParams['6-1-0'] !== undefined) vals[2] = Math.round(msg.fxParams['6-1-0'] * 100) + '%'; // GTR harmony
+        if (msg.fxParams['6-2-0'] !== undefined) vals[3] = Math.round(msg.fxParams['6-2-0'] * 100) + '%'; // GTR amp
+        if (msg.fxParams['6-3-0'] !== undefined) vals[4] = Math.round(msg.fxParams['6-3-0'] * 100) + '%'; // GTR trem
+        var knobs = { 1: {}, 2: {}, 3: {}, 4: {} };
+        if (vals[1]) knobs[1].value = vals[1];
+        if (vals[2]) knobs[2].value = vals[2];
+        if (vals[3]) knobs[3].value = vals[3];
+        if (vals[4]) knobs[4].value = vals[4];
+        setKnobLabels(knobs);
+      }
+    },
+  });
+
+  function sendFXCommand(channel, type, value) {
+    var track = channel === 'vox' ? 1 : 2;
+    if (type === 'volume') {
+      sendCommand('fx_command', { osc: '/track/' + track + '/volume', args: [value / 32] });
+    } else if (type === 'preset') {
+      var fxIdx = value.fxIdx + 1; // 1-indexed
+      sendCommand('fx_command', { osc: '/track/' + track + '/fx/' + fxIdx + '/preset', args: [value.preset] });
+    } else if (type === 'bypass') {
+      var fxIdx = value.fxIdx + 1;
+      sendCommand('fx_command', { osc: '/track/' + track + '/fx/' + fxIdx + '/bypass', args: [value.enabled ? 0 : 1] });
+    }
+  }
+
+  function updateFXTabUI() {
+    var gt = document.getElementById('fx-tab-gtr');
+    var vt = document.getElementById('fx-tab-vox');
+    if (gt) gt.className = 'perf-fx-tab' + (perfFX.channel === 'gtr' ? ' active' : '');
+    if (vt) vt.className = 'perf-fx-tab' + (perfFX.channel === 'vox' ? ' active' : '');
+    updateFXVolUI();
+  }
+
+  function updateFXVolUI() {
+    var ch = perfFX.channel;
+    var label = document.getElementById('fx-vol-label');
+    var fill = document.getElementById('fx-vol-fill');
+    var valEl = document.getElementById('fx-vol-val');
+    var vol = perfFX[ch].volume;
+    if (label) { label.textContent = ch === 'gtr' ? 'GTR Vol' : 'VOX Vol'; label.style.color = ch === 'gtr' ? '#ff8800' : '#1abc9c'; }
+    if (fill) fill.style.width = (vol / 32 * 100) + '%';
+    if (valEl) valEl.textContent = vol;
+  }
+
+  function renderFXBlocks() {
+    var blocks = document.getElementById('perf-fx-blocks');
+    if (!blocks) return;
+    var ch = perfFX.channel;
+    var state = perfFX[ch];
+    var html = '';
+    FX_DEFS.forEach(function (def) {
+      var fx = state.fx[def.id];
+      var name = ch === 'gtr' ? def.gtrName : def.voxName;
+      var enabledClass = fx.enabled ? '' : ' fx-disabled';
+      html += '<div class="fx-block' + enabledClass + '" data-fx="' + def.id + '">';
+      html += '  <div class="fx-block-header">';
+      html += '    <span class="fx-block-name">' + name + '</span>';
+      html += '    <div class="fx-block-controls">';
+      html += '      <button class="fx-bank-btn" data-action="bank">Bank ' + (fx.bank + 1) + '/2</button>';
+      html += '      <button class="fx-bypass-btn' + (fx.enabled ? ' fx-enabled' : ' fx-bypassed') + '" data-action="bypass">' + (fx.enabled ? 'ON' : 'OFF') + '</button>';
+      html += '    </div>';
+      html += '  </div>';
+      html += '  <div class="fx-preset-row">';
+      var base = fx.bank * 3 + 1;
+      for (var p = 0; p < 3; p++) {
+        var presetNum = base + p;
+        var active = fx.preset === presetNum ? ' active' : '';
+        html += '    <button class="fx-preset-btn' + active + '" data-preset="' + presetNum + '">' + presetNum + '</button>';
+      }
+      html += '  </div>';
+      html += '</div>';
+    });
+    blocks.innerHTML = html;
+
+    // Event listeners
+    blocks.querySelectorAll('.fx-block').forEach(function (block) {
+      var fxId = parseInt(block.dataset.fx);
+      block.querySelector('[data-action="bank"]').addEventListener('click', function () {
+        var fx = state.fx[fxId];
+        fx.bank = fx.bank === 0 ? 1 : 0;
+        renderFXBlocks();
+      });
+      block.querySelector('[data-action="bypass"]').addEventListener('click', function () {
+        var fx = state.fx[fxId];
+        fx.enabled = !fx.enabled;
+        sendFXCommand(ch, 'bypass', { fxIdx: fxId, enabled: fx.enabled });
+        renderFXBlocks();
+      });
+      block.querySelectorAll('.fx-preset-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var preset = parseInt(this.dataset.preset);
+          var fx = state.fx[fxId];
+          if (!fx.enabled) { fx.enabled = true; sendFXCommand(ch, 'bypass', { fxIdx: fxId, enabled: true }); }
+          fx.preset = preset;
+          sendFXCommand(ch, 'preset', { fxIdx: fxId, preset: preset });
+          renderFXBlocks();
+        });
+      });
+    });
+  }
 
   // ════════════════════════════════════════════════════════
   // ─── PAGE: SETLIST ───────────────────────────────────
@@ -2410,6 +2678,270 @@
 
   function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ════════════════════════════════════════════════════════
+  // ─── PAGE: LYRICS (Teleprompter Mirror + Chord Colors) ─
+  // ════════════════════════════════════════════════════════
+
+  var lyricsFontSize = getSetting('lyricsFontSize', 16);
+  var lyricsPlainView = getSetting('lyricsPlainView', false);
+  var lyricsShowChordHelp = false;
+  var lyricsChordHelpDefault = getSetting('chordHelpDefault', false);
+
+  function classifyChord(chordText) {
+    // chordText is the text inside brackets: "Am", "A7", "D5", "Bdim7", "F#m"
+    var text = chordText.trim();
+    if (!text) return { type: 'major', root: text, flavor: '' };
+
+    // Power chord: contains '5' and no 'm' (not m5)
+    if (/5/.test(text) && !/[a-g]m/i.test(text)) {
+      return { type: 'power', root: text, flavor: '' };
+    }
+
+    // Complex: dim, aug, +, m7b5, diminished, augmented, °, ø
+    if (/dim|aug|\+|m7b5|°|ø|alt/i.test(text)) {
+      var rt = text.replace(/dim.+$|aug.*$|\+.+|m7b5.*$|°.*$|ø.*$|alt.*$/i, '');
+      var fl = text.slice(rt.length);
+      return { type: 'complex', root: rt || text, flavor: fl };
+    }
+
+    // Minor: contains 'm' but NOT 'maj' or 'dim'
+    if (/[a-g]m/i.test(text) && !/maj/i.test(text) && !/dim/i.test(text)) {
+      var rt = text.match(/^[A-G][#b]?/i);
+      var root = rt ? rt[0] : text;
+      var fl = text.slice(root.length);
+      return { type: 'minor', root: root, flavor: fl };
+    }
+
+    // Major: everything else
+    var rt = text.match(/^[A-G][#b]?/i);
+    var root = rt ? rt[0] : text;
+    var fl = text.slice(root.length);
+    if (/maj/i.test(fl)) {
+      // Just the "maj" part is flavor, rest stays
+    }
+    return { type: 'major', root: root, flavor: fl };
+  }
+
+  function renderChordHTML(chordText) {
+    var c = classifyChord(chordText);
+    var colorMap = { major: '#f1c40f', minor: '#3498db', power: '#ff8800', complex: '#9b59b6' };
+    var color = colorMap[c.type] || colorMap.major;
+    var html = '<span class="chord-lyric" style="color:' + color + ';font-weight:700;">' + escapeHtml(c.root) + '</span>';
+    if (c.flavor) {
+      html += '<span class="chord-flavor-lyric" style="color:' + color + ';">' + escapeHtml(c.flavor) + '</span>';
+    }
+    return html;
+  }
+
+  function parseLyricLine(line) {
+    if (!line) return '';
+    var result = '';
+    var remaining = line;
+    while (remaining.length > 0) {
+      var bracketIdx = remaining.indexOf('[');
+      if (bracketIdx === -1) {
+        result += escapeHtml(remaining);
+        break;
+      }
+      // Text before bracket
+      if (bracketIdx > 0) {
+        result += escapeHtml(remaining.slice(0, bracketIdx));
+      }
+      var closeIdx = remaining.indexOf(']', bracketIdx);
+      if (closeIdx === -1) {
+        result += escapeHtml(remaining.slice(bracketIdx));
+        break;
+      }
+      var chordText = remaining.slice(bracketIdx + 1, closeIdx);
+      result += renderChordHTML(chordText);
+      remaining = remaining.slice(closeIdx + 1);
+    }
+    return result;
+  }
+
+  registerPage('lyrics', {
+    render: function (container) {
+      var fs = lyricsFontSize;
+      var chordFs = Math.round(fs * 2);
+      container.innerHTML =
+        '<div class="lyrics-header">' +
+          '<button class="lyrics-back" id="lyrics-back">\u2190 Back</button>' +
+          '<span class="lyrics-title" id="lyrics-title">' + (state.activeSong || 'Lyrics') + '</span>' +
+          '<div class="lyrics-header-right">' +
+            '<button class="lyrics-plain-btn' + (lyricsPlainView ? ' active' : '') + '" id="lyrics-plain-btn" title="Plain View">TXT</button>' +
+            '<button class="lyrics-help-btn" id="lyrics-help-btn" title="Chord color help">?</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="lyrics-body" id="lyrics-body" style="font-size:' + fs + 'px;">' +
+          '<div class="lyrics-content" id="lyrics-content"></div>' +
+          '<div class="lyrics-font-slider">' +
+            '<span class="lyrics-font-label">A</span>' +
+            '<input type="range" class="lyrics-font-range" id="lyrics-font-range" min="10" max="36" value="' + fs + '" orient="vertical">' +
+            '<span class="lyrics-font-label large">A</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="lyrics-help-overlay" id="lyrics-help-overlay" style="display:none;">' +
+          '<div class="lyrics-help-box">' +
+            '<div class="lyrics-help-box-title">Chord Colors</div>' +
+            '<div class="lyrics-help-legend">' +
+              '<div class="lyrics-help-row"><span class="chord-dot" style="background:#f1c40f;"></span><span class="chord-dot-label">Yellow</span><span class="chord-dot-desc">Major chords</span><span class="chord-dot-ex">A, D7, Gmaj7</span></div>' +
+              '<div class="lyrics-help-row"><span class="chord-dot" style="background:#3498db;"></span><span class="chord-dot-label">Blue</span><span class="chord-dot-desc">Minor chords</span><span class="chord-dot-ex">Am, Bm7, F#m9</span></div>' +
+              '<div class="lyrics-help-row"><span class="chord-dot" style="background:#ff8800;"></span><span class="chord-dot-label">Orange</span><span class="chord-dot-desc">Power chords</span><span class="chord-dot-ex">A5, D5, E5</span></div>' +
+              '<div class="lyrics-help-row"><span class="chord-dot" style="background:#9b59b6;"></span><span class="chord-dot-label">Purple</span><span class="chord-dot-desc">Complex</span><span class="chord-dot-ex">Bdim7, Caug, D7b9</span></div>' +
+            '</div>' +
+            '<label class="lyrics-help-check"><input type="checkbox" id="lyrics-chk-overlay"> Show chord color help on Teleprompter</label>' +
+            '<label class="lyrics-help-check"><input type="checkbox" id="lyrics-chk-default"> Display chord help by default</label>' +
+            '<button class="lyrics-help-close" id="lyrics-help-close">Close</button>' +
+          '</div>' +
+        '</div>';
+    },
+
+    onActivate: function () {
+      document.getElementById('lyrics-back').addEventListener('click', function () {
+        navigateTo('home');
+      });
+
+      document.getElementById('lyrics-plain-btn').addEventListener('click', function () {
+        lyricsPlainView = !lyricsPlainView;
+        setSetting('lyricsPlainView', lyricsPlainView);
+        this.classList.toggle('active', lyricsPlainView);
+        renderLyricsContent();
+      });
+
+      document.getElementById('lyrics-font-range').addEventListener('input', function () {
+        lyricsFontSize = parseInt(this.value);
+        setSetting('lyricsFontSize', lyricsFontSize);
+        var body = document.getElementById('lyrics-body');
+        if (body) body.style.fontSize = lyricsFontSize + 'px';
+        renderLyricsContent();
+      });
+
+      // Chord help popup
+      var overlay = document.getElementById('lyrics-help-overlay');
+      var chkOverlay = document.getElementById('lyrics-chk-overlay');
+      var chkDefault = document.getElementById('lyrics-chk-default');
+
+      chkDefault.checked = lyricsChordHelpDefault;
+
+      document.getElementById('lyrics-help-btn').addEventListener('click', function () {
+        overlay.style.display = 'flex';
+        chkOverlay.checked = lyricsShowChordHelp;
+        chkDefault.checked = lyricsChordHelpDefault;
+      });
+      document.getElementById('lyrics-help-close').addEventListener('click', function () {
+        overlay.style.display = 'none';
+      });
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) overlay.style.display = 'none';
+      });
+
+      chkOverlay.addEventListener('change', function () {
+        lyricsShowChordHelp = this.checked;
+        sendCommand('chord_help_toggle', { enabled: lyricsShowChordHelp });
+      });
+
+      chkDefault.addEventListener('change', function () {
+        lyricsChordHelpDefault = this.checked;
+        setSetting('chordHelpDefault', lyricsChordHelpDefault);
+        if (this.checked && !lyricsShowChordHelp) {
+          // When enabling default while overlay is off, turn it on too
+          lyricsShowChordHelp = true;
+          chkOverlay.checked = true;
+          sendCommand('chord_help_toggle', { enabled: true });
+        }
+      });
+
+      // Auto-enable chord help on boot if default is set
+      if (lyricsChordHelpDefault && !lyricsShowChordHelp) {
+        lyricsShowChordHelp = true;
+        sendCommand('chord_help_toggle', { enabled: true });
+      }
+
+      setKnobLabels({
+        1: { name: '--', value: '', color: '#333' },
+        2: { name: '--', value: '', color: '#333' },
+        3: { name: '--', value: '', color: '#333' },
+        4: { name: '--', value: '', color: '#333' },
+      });
+
+      // Compute sections for Plain View
+      computePlainSections();
+      renderLyricsContent();
+    },
+
+    onState: function (msg) {
+      var title = document.getElementById('lyrics-title');
+      if (title && msg.currentSong) title.textContent = msg.currentSong;
+      if (msg.lyricLines) {
+        state.lyricLines = msg.lyricLines;
+        computePlainSections();
+        renderLyricsContent();
+      }
+    },
+  });
+
+  function computePlainSections() {
+    state._plainSections = [];
+    var lines = state.lyricLines || [];
+    var currentSection = null;
+    var sectionLines = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.type && line.type !== 'lyric') {
+        // Section boundary
+        if (currentSection) {
+          state._plainSections.push({ label: currentSection, lines: sectionLines });
+        }
+        currentSection = line.label || line.type || 'Section';
+        sectionLines = [];
+      } else if (line.text) {
+        sectionLines.push(line.text);
+      }
+    }
+    if (currentSection) {
+      state._plainSections.push({ label: currentSection, lines: sectionLines });
+    }
+  }
+
+  function renderLyricsContent() {
+    var el = document.getElementById('lyrics-content');
+    if (!el) return;
+    var lyricLines = state.lyricLines || [];
+    var chordFs = Math.round(lyricsFontSize * 2);
+    var chordStyle = ' style="font-size:' + chordFs + 'px;"';
+
+    if (lyricsPlainView && state._plainSections && state._plainSections.length > 0) {
+      // Plain View — section labels + plain text
+      var html = '';
+      state._plainSections.forEach(function (sec) {
+        html += '<div class="lyrics-section-label">' + escapeHtml(sec.label) + '</div>';
+        sec.lines.forEach(function (line) {
+          var cleaned = String(line || '');
+          html += '<div class="lyrics-plain-line">' + escapeHtml(cleaned) + '</div>';
+        });
+        html += '<div class="lyrics-section-gap"></div>';
+      });
+      el.innerHTML = html;
+    } else if (lyricLines.length > 0) {
+      // Chord view — parse chord colors
+      var html = '';
+      for (var i = 0; i < lyricLines.length; i++) {
+        var l = lyricLines[i];
+        if (l.type && l.type !== 'lyric') {
+          // Section marker
+          html += '<div class="lyrics-section-marker">' + escapeHtml(l.label || l.type || '') + '</div>';
+        }
+        if (l.text) {
+          var parsed = parseLyricLine(l.text);
+          html += '<div class="lyrics-line"' + chordStyle + '>' + parsed + '</div>';
+        }
+      }
+      el.innerHTML = html;
+    } else {
+      el.innerHTML = '<div class="lyrics-empty">No lyrics loaded. Start a song to see lyrics here.</div>';
+    }
   }
 
   // ════════════════════════════════════════════════════════
