@@ -38,7 +38,29 @@
       4: { name: 'REV MST', value: '', color: '#9b59b6' },
     },
     loopStates: [],
+    // Tempo sync config
+    beat1Color: null,
+    beatColor: '#2ecc71',
   };
+
+  var BEAT_HEX = {
+    red: '#e74c3c', blue: '#3498db', purple: '#9b59b6', white: '#ffffff',
+    orange: '#ff8800', green: '#2ecc71'
+  };
+
+  function fetchTempoSyncConfig() {
+    fetch('http://' + window.location.hostname + ':3300/api/config/tempo-sync')
+      .then(function(r) { return r.json(); })
+      .then(function(cfg) {
+        if (cfg.beat1_behavior && cfg.beat1_behavior !== 'no_distinction') {
+          state.beat1Color = BEAT_HEX[cfg.beat1_behavior] || null;
+        } else {
+          state.beat1Color = null;
+        }
+        state.beatColor = BEAT_HEX[cfg.beat_color] || '#2ecc71';
+      })
+      .catch(function() { /* port 3300 not available, use defaults */ });
+  }
 
   // ─── Settings Persistence ────────────────────────────
   function loadSettings() {
@@ -210,25 +232,47 @@
     if (beatZero !== lastBeatTrigger && timeSinceStart < 0.04) {
       lastBeatTrigger = beatZero;
       var isDownbeat = beatInMeasure === 0;
+      var beatColor = isDownbeat && state.beat1Color ? state.beat1Color : state.beatColor;
 
       // Edge bar flash
-      beatFlashEl.className = isDownbeat ? 'beat-flash beat-1' : 'beat-flash beat-234';
+      var edgeClass = isDownbeat && state.beat1Color ? 'beat-1' : 'beat-234';
+      beatFlashEl.className = 'beat-flash ' + edgeClass;
+      if (isDownbeat && state.beat1Color) beatFlashEl.style.background = state.beat1Color;
+      else beatFlashEl.style.background = beatColor;
       clearTimeout(beatFlashEl._resetTimer);
       beatFlashEl._resetTimer = setTimeout(function () {
-        if (beatFlashEl) beatFlashEl.className = 'beat-flash';
+        if (beatFlashEl) { beatFlashEl.className = 'beat-flash'; beatFlashEl.style.background = ''; }
       }, 80);
 
-      // Pulse dot — synced to same beat, no fade
+      // Pulse dot — synced to same beat
       var pulseDot = document.getElementById('pulse-indicator');
       if (pulseDot) {
         pulseDot.style.opacity = '1';
-        pulseDot.style.background = isDownbeat ? '#ffffff' : '#2ecc71';
-        pulseDot.style.boxShadow = isDownbeat ? '0 0 6px rgba(255,255,255,0.5)' : 'none';
+        pulseDot.style.background = beatColor;
+        pulseDot.style.boxShadow = isDownbeat && state.beat1Color ? '0 0 6px rgba(255,255,255,0.5)' : 'none';
         clearTimeout(pulseDot._resetTimer);
         pulseDot._resetTimer = setTimeout(function () {
           pulseDot.style.opacity = '0.3';
           pulseDot.style.background = '#2ecc71';
           pulseDot.style.boxShadow = '';
+        }, 80);
+      }
+
+      // Beat sync light widget
+      var beatLight = document.getElementById('beat-light');
+      if (beatLight) {
+        beatLight.style.background = beatColor;
+        beatLight.style.borderColor = beatColor;
+        beatLight.classList.add('beat-flash');
+        if (isDownbeat && state.beat1Color) beatLight.classList.add('beat-flash-downbeat');
+        var inner = beatLight.querySelector('.beat-light-inner');
+        if (inner) inner.style.background = '#fff';
+        clearTimeout(beatLight._resetTimer);
+        beatLight._resetTimer = setTimeout(function () {
+          beatLight.classList.remove('beat-flash', 'beat-flash-downbeat');
+          beatLight.style.background = '#1a1a1a';
+          beatLight.style.borderColor = '#333';
+          if (inner) inner.style.background = '#333';
         }, 80);
       }
     }
@@ -425,6 +469,7 @@
             </div>
           </div>
           <div class="tele-controls">
+            <div class="beat-light" id="beat-light"><div class="beat-light-inner"></div></div>
             <button class="tele-btn tele-rewind" id="tele-btn-left" title="Rewind / Restart Section">\u23EE\u23EE</button>
             <button class="tele-btn tele-pause" id="tele-btn-third" title="Pause / 3rd Button">\u23F8</button>
             <button class="tele-btn tele-skip" id="tele-btn-right" title="Skip / Next Section">\u23ED\u23ED</button>
@@ -2952,6 +2997,7 @@
     createBeatFlash();
     startBeatLoop();
     connectSocketIO();
+    fetchTempoSyncConfig();
     navigateTo('home');
   }
 

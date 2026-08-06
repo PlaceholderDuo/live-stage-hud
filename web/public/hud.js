@@ -479,14 +479,33 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // CHORD COLORING — Type-based (Major/Minor/Power/Complex)
+  // CHORD COLORING — Two modes: "circle" (Circle of 5ths by root note) or "flavor" (Major/Minor/Power/Complex)
   // ═══════════════════════════════════════════════════════════
+
+  var chordColorMode = 'circle'; // default, overridden by API fetch
 
   function getChordColor(chord) {
     if (!chord) return null;
+    if (chordColorMode === 'circle') return getChordRootColor(chord);
     var type = classifyChord(chord).type;
     var colors = { major: '#f1c40f', minor: '#3498db', power: '#ff8800', complex: '#9b59b6' };
     return colors[type] || colors.major;
+  }
+
+  function getChordRootColor(chord) {
+    var root = chord.match(/^[A-G][b#]?/);
+    if (!root) return null;
+    root = root[0];
+    var map = {
+      'C': '#ff3333', 'C#': '#ff6b35', 'Db': '#ff6b35',
+      'D': '#ff8800', 'D#': '#ffaa00', 'Eb': '#ffaa00',
+      'E': '#ffdd00',
+      'F': '#33cc66', 'F#': '#1abc9c', 'Gb': '#1abc9c',
+      'G': '#3399ff', 'G#': '#5b6abf', 'Ab': '#5b6abf',
+      'A': '#9933ff', 'A#': '#cc33ff', 'Bb': '#cc33ff',
+      'B': '#ff3399'
+    };
+    return map[root] || null;
   }
 
   function classifyChord(chordText) {
@@ -1163,6 +1182,13 @@
       statusText.className = "status-dot connected";
       isFirstSong = true;
       lastSongId = null;
+      // Fetch chord color mode from show server config
+      fetch('http://' + window.location.hostname + ':3300/api/config/teleprompter')
+        .then(function(r) { return r.json(); })
+        .then(function(cfg) {
+          if (cfg && cfg.chord_color_mode) chordColorMode = cfg.chord_color_mode;
+        })
+        .catch(function() { /* keep default */ });
     });
 
     socket.on("disconnect", function () {

@@ -2097,6 +2097,42 @@ html, body {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  align-items: center;
+}
+
+/* Beat sync light */
+.beat-light {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #1a1a1a;
+  border: 2px solid #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.08s, border-color 0.08s, box-shadow 0.08s;
+  flex-shrink: 0;
+}
+
+.beat-light-inner {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #333;
+  transition: background 0.08s;
+}
+
+.beat-light.beat-flash {
+  border-color: #2ecc71;
+  box-shadow: 0 0 8px rgba(46,204,113,0.5);
+}
+
+.beat-light.beat-flash .beat-light-inner {
+  background: #2ecc71;
+}
+
+.beat-light.beat-flash-downbeat {
+  box-shadow: 0 0 12px rgba(255,255,255,0.6);
 }
 
 .tele-btn {
