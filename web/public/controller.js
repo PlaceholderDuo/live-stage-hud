@@ -2744,6 +2744,7 @@
   var lyricsPlainView = getSetting('lyricsPlainView', false);
   var lyricsShowChordHelp = false;
   var lyricsChordHelpDefault = getSetting('chordHelpDefault', false);
+  var chordConfigPollTimer = null;
 
   function classifyChord(chordText) {
     // chordText is the text inside brackets: "Am", "A7", "D5", "Bdim7", "F#m"
@@ -2952,6 +2953,30 @@
       // Compute sections for Plain View
       computePlainSections();
       renderLyricsContent();
+
+      // Poll config for chord color mode changes while lyrics page is active
+      if (chordConfigPollTimer) clearInterval(chordConfigPollTimer);
+      chordConfigPollTimer = setInterval(function () {
+        fetch('http://' + window.location.hostname + ':3300/api/config/teleprompter')
+          .then(function(r) { return r.json(); })
+          .then(function(cfg) {
+            if (cfg && cfg.chord_color_mode && cfg.chord_color_mode !== chordColorMode) {
+              chordColorMode = cfg.chord_color_mode;
+              var overlayEl = document.getElementById('lyrics-help-overlay');
+              if (overlayEl && overlayEl.style.display !== 'none') {
+                renderChordHelpLegend();
+              }
+            }
+          })
+          .catch(function() { /* ignore */ });
+      }, 3000);
+    },
+
+    onDeactivate: function () {
+      if (chordConfigPollTimer) {
+        clearInterval(chordConfigPollTimer);
+        chordConfigPollTimer = null;
+      }
     },
 
     onState: function (msg) {

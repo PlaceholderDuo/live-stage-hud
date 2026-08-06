@@ -1198,6 +1198,19 @@
       statusText.className = "status-dot connected";
       isFirstSong = true;
       lastSongId = null;
+      // Fetch teleprompter config (chord color mode) from show server
+      function fetchChordColorMode() {
+        fetch('http://' + window.location.hostname + ':3300/api/config/teleprompter')
+          .then(function(r) { return r.json(); })
+          .then(function(cfg) {
+            if (cfg && cfg.chord_color_mode) chordColorMode = cfg.chord_color_mode;
+          })
+          .catch(function() { /* keep default */ });
+      }
+      fetchChordColorMode();
+      // Poll every 5 seconds for live config changes
+      setInterval(fetchChordColorMode, 5000);
+
       // Fetch tempo sync config from show server
       fetch('http://' + window.location.hostname + ':3300/api/config/tempo-sync')
         .then(function(r) { return r.json(); })
