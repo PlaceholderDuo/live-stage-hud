@@ -700,12 +700,17 @@
     if (!lines || lines.length === 0) return;
 
     // Find current line by time position using _time annotations
-    // Each line now has _time (seconds) — either from @time=N or estimated
+    // Each line now has _time (seconds) — either from @time=N or estimated.
+    // Times must be non-decreasing in array order: a later array line stamped
+    // with an earlier @time (e.g. duplicated verse annotations) must not steal
+    // "current", or instrumental runs get skipped (RUNNIN' DOWN A DREAM).
     var currentIdx = 0;
+    var seenTime = -Infinity;
     for (var i = 0; i < lines.length; i++) {
       var lineTime = lines[i]._time;
-      if (lineTime !== null && lineTime !== undefined && lineTime <= position) {
+      if (lineTime !== null && lineTime !== undefined && lineTime >= seenTime && lineTime <= position) {
         currentIdx = i;
+        seenTime = lineTime;
       }
     }
 
