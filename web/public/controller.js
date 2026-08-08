@@ -234,7 +234,14 @@
   function tickBeats() {
     if (!state.tempo || state.tempo < 20) return;
     var beatInterval = 60 / state.tempo;
-    var pos = predictedPosition();
+    var pos;
+    // When a live tap re-anchored the down-beat, follow the shared tempo anchor
+    // (wall clock) so Beat 1 tracks the drummer; otherwise use live/REAPER pos.
+    if (state.tempoSource === 'tap' && state.downbeatAt > 0) {
+      pos = (Date.now() - state.downbeatAt) / 1000;
+    } else {
+      pos = predictedPosition();
+    }
     var beatInSong = pos / beatInterval;
     var beatZero = Math.floor(beatInSong); // 0-indexed global beat
     var beatInMeasure = beatZero % 4; // 0=beat1, 1=beat2, 2=beat3, 3=beat4
@@ -337,6 +344,11 @@
 
     socket.on('state', function (msg) {
       if (msg.bpm) state.tempo = msg.bpm;
+      if (msg.tempo) {
+        state.tempoSource = msg.tempo.source;
+        state.downbeatAt = msg.tempo.downbeatAt;
+        state.downbeatRev = msg.tempo.downbeatRev;
+      }
       if (msg.position !== undefined && msg.position !== state.position) {
         state.lastPosition = msg.position;
         state.lastStateTime = performance.now();

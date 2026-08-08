@@ -336,6 +336,15 @@ html, body {
   text-shadow: 0 0 10px rgba(255, 85, 0, 0.3);
 }
 
+.solo-grid .chord.chord-active {
+  color: #fff;
+  text-shadow: none;
+}
+
+.solo-grid .chord.dim {
+  opacity: 0.25;
+}
+
 .solo-progress-bar {
   width: 60%;
   height: 8px;

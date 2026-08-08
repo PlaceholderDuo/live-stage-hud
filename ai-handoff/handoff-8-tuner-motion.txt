@@ -1,0 +1,170 @@
+═══════════════════════════════════════════════════════════════
+HANDOFF 8: Grid Tuner Motion-Band → iPhone HD Tuner + REAPER
+═══════════════════════════════════════════════════════════════
+nova-script just read an 8×8 strobe-based tuner that PROVED the
+"motion guides tuning" principle works. The design is battle-
+tested (matches Peterson/Chroma/mod.dev strobe logic verbatim).
+
+GOAL OF THIS HANDOFF:
+  1) Port the PROVEN motion-band model to the iPhone controller
+     (full HD screen, huge dynamic range for tuning).
+  2) Wire it to REAPER's tuner / pitch detection using the
+     standard, tried-and-tested OSC path (NOT a custom hack).
+  3) Keep nova-script's Launchpad grid tuner as the compact
+     surface; the iPhone gets the big beautiful one.
+
+Core principle (proven, matches mod.dev + Chroma):
+   STROBE DONE RESOLUTION. "Less it moves, more you're in tune."
+                 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                 ┃  speed = distance from in-tune  ┃
+                 ┃  color = lock state             ┃
+                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+═══════════════════════════════════════════════════════════════
+THE DATA FLOW (which project owns what)
+═══════════════════════════════════════════════════════════════
+
+  REAPER → pitch detector (JSFX or control surface) → OSC /nova/tuner
+     → LSM server (:3000, server.js) receives /nova/tuner
+     → stores state.tuner = { cents, channel }
+     → broadcastState() → WebSocket → iPhone controller
+     → iPhone renders HD motion-band tuner
+
+  (nova-script is a SEPARATE agent tonight; it owns its own
+   /src/osc/bridge.py tuner path. Do NOT touch nova-script from
+   this session. This handoff is only the live-show-manager side:
+   LSM server + iPhone web assets.)
+
+═══════════════════════════════════════════════════════════════
+THE PROVEN BEHAVIOR (port this verbatim logic)
+═══════════════════════════════════════════════════════════════
+
+A vertical band (2 columns wide) sweeps left↔right. Its SPEED is
+proportional to |cents| (distance from in-tune). As the player
+gets closer, the band DECELERATES. When |cents| < ~3 the band
+goes essentially stationary and turns GREEN = locked.
+
+  |cents|       band speed        color
+  ─────────────────────────────────────
+  > 20          max sweep         RED    (visibly way off)
+  3 < |c| < 20  slowing           AMBER  (hunting it down)
+  |c| < 3       ~0 (stops)        GREEN  (LOCKED)
+
+Key design (do NOT skip):
+- speed = smoothstep-decay, NOT teleport. Band position integrates
+  velocity over time so it physically glides / slows / stops
+  (this is what makes "less it moves, more you're in tune" true).
+- The band bounces off the grid edges and keeps sweeping while
+  out of tune. Only reaching in-tune stops it.
+- Trigger-behaviour: ANY pad press exits the tuner.
+
+Exact tuning constants proven in nova-script (source of truth):
+  Speed per cent:       speed += cents * 0.18, capped at 7.0
+  Smoothing:            speed lerp toward target each frame
+  Lock threshold:       locked = |cents| < 3 AND speed < 0.4
+  Near threshold:       NEAR_CENT = 20 (below this turn amber)
+  Band width:           ~1.5 columns
+  Bounce bounds:        band_x between 0.6 and 6.4 on an 8-wide grid
+
+Port the *math*, not the layout — on iPhone you have real pixels,
+so you can use a WIDER band and a smooth gradient bar instead of
+chunky 2-pixel columns.
+
+═══════════════════════════════════════════════════════════════
+TASK 1: iPhone Tuner Page (the big HD one)
+═══════════════════════════════════════════════════════════════
+Add a tuner mode to the iPhone controller (web/public/controller.js
++ CSS + index.html).
+
+UI spec:
+- Horizontal smooth band ~2/3 screen width, centered, animating
+  left/right. Background rgba track (darker).
+- The band's positionX has velocity driven by state.tuner.cents.
+- Color by lock state: AMBER (out) → GREEN (locked). Use the
+  FULL color space on HD: amber→green gradient while sweeping.
+- Centered "0" tick. When locked, band freezes in center-ish
+  range and pulses GREEN, maybe a "LOCKED ✓" flash.
+- Show the target note (state.tuner.channel / detected note name)
+  big at top so the player tunes the right string.
+
+Enter/exit:
+- A "Tune" button on the home page / amp page opens the tuner.
+- Tap anywhere on the tuner page closes it (matches nova habit).
+
+CSS hints:
+  .tuner-track { width: 66%; height: 40px; position: relative;
+                 border-radius: 20px; background: #222; }
+  .tuner-band { position: absolute; width: 22%; height: 100%;
+                 border-radius: 20px; will-change: transform;
+                 transition / also update every frame via rAF;
+                 transform: translateX(...) }
+  rAF loop reads state.tuner.cents → speed = cents*0.18 →
+  bandX += dir*speed*dt, bounce at edges, color lerp.
+
+═══════════════════════════════════════════════════════════════
+TASK 2: REAPER pitch/tuner integration (tried-and-tested path)
+═══════════════════════════════════════════════════════════════
+Use REAPER's BUILT-IN tuner, exposed over the existing OSC
+control surface. Do NOT hand-roll an FFT on the iPhone.
+
+REAPER's native OSC tuner mechanism: Reaper → Options →
+Control/OSC/web → enable "Send Center Note for row". The tuner
+browser players announce the center/default via a JSFX that
+pushes pitch to a control surface. The robust, verified method:
+  A JSFX pitch-tracking plugin pushes "detected_freq" → a small
+  ReaScript / LUA reads it → sends OSC to our :8080 server.
+
+Because this is the "unknown of the session", keep it decoupled:
+  server.js already routes /nova/tuner/{} similarly to V25 values.
+
+So restate TASK 2 as a PROBE FIRST:
+  A) Research + pick ONE working REAPER→OSC tuner feed today:
+     - builtin Reaper OSC tuner / control-surface feedback
+     - OR a ReaPack "Tuner" JSFX that exposes a raw `freq`.
+  B) The minute a raw `freq` appears, convert to cents:
+       cents = 1200 * log2(freq / targetFreq)
+       targetFreq from nearest chromatic note or a fixed tuning.
+     Push to server as /nova/tuner { cents, channel }.
+  Do this empirically and commit what actually worked.
+
+Phone side should degrade gracefully: if no tuner feed for
+>1500ms set state.tuner.cents = null → iPhone shows "NO SIG"
+grey band instead of pretending.
+
+═══════════════════════════════════════════════════════════════
+SERVER CHANGES (web/server.js)
+═══════════════════════════════════════════════════════════════
+  Add to OSC routing (mirror the V25 track-volume handler):
+
+    case "/nova/tuner":
+      state.tuner = { cents: args[0], channel: args[1] || "GTR",
+                      note: args[2] || "" };
+      break;
+
+  Always include state.tuner in broadcastState() payload.
+
+═══════════════════════════════════════════════════════════════
+IPHONE CHANGES (web/public/*)
+═══════════════════════════════════════════════════════════════
+  controller.js   ← tuner page state + rAF band animation, cents→color
+  controller.css   ← tuner track/band styles, gradient, lock pulse
+  index.html        ← tuner page container + modal transitions
+
+Use the home menu (existing icon grid) to wrap toggling the tuner.
+
+═══════════════════════════════════════════════════════════════
+NOVA-SCRIPT REFERENCE (for parity only — do NOT modify here)
+═══════════════════════════════════════════════════════════════
+  src/ui/modes/performance.py  → _render_tuner(), _advance_tuner_band()
+  src/osc/bridge.py            → /nova/tuner → {type:tuner, cents, channel}
+  src/osc/namespace.py         → "tuner": "/nova/tuner"
+  Test: tests/test_performance_mode.py → test_tuner_motion() (GREEN)
+
+When deploying the iPhone tuner, keep the grid tuner's logic
+identical in shape so both surfaces show the SAME player state.
+═══════════════════════════════════════════════════════════════
+NOTE / PHONE LABELS
+═══════════════════════════════════════════════════════════════
+The name is "tuner" everywhere. First use: get ONE rock-solid
+REAPER pitch feed; the pretty UI is worthless without real signal.
+Start with the probe, then bundle iPhone page + bounce.

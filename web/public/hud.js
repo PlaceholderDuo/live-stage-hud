@@ -43,6 +43,7 @@
   var soloEngine = $("soloEngine");
   var soloGrid = $("soloGrid");
   var soloProgressFill = $("soloProgressFill");
+  var soloCue = $("soloCue");
 
   var timelineNotches = $("timelineNotches");
 
@@ -129,17 +130,28 @@
   }
 
   // Match a bare chord name (no brackets): root note + optional quality + optional bass
-  var chordNameRe = /^[A-G][b#]?(?:m|dim|aug|sus[24]|add\d+|maj7|maj9|m6|m7|m9|7|9|11|13|6)*(?:\/[A-G][b#]?)?$/;
+  var chordNameRe = /^[A-G][b#]?(?:m|dim|aug|sus[24]|add\d+|maj7|maj9|m6|m7|m9|7|9|11|13|6|5)*(?:\/[A-G][b#]?)?$/;
+
+  // Bracket tokens in UG files are chords OR section labels. UG puts labels
+  // like [Solo/Chorus], [Fade Out], [Verse 1-1] in brackets too. Distinguish:
+  // only keep bracket tokens that parse as real chords, so label markers never
+  // render as fake chords or pollute instrumental chord runs.
+  var chordTokenRe = /^(?:[A-G][#b]?)(?:(?:maj|M|m|dim|aug|sus|add)(?:[0-9]{1,2})?|[0-9][#b0-9]*)*(?:\/[A-G][#b]?)?$/;
 
   // "I got my [D]first real six-[A]string"
   // → [{chord:"", word:"I got my "}, {chord:"D", word:"first real six-"}, {chord:"A", word:"string"}]
   function parseLinePairs(raw) {
     var pairs = [];
     var re = /\[([^\]]+)\]/g;
+    var re = /\[([^\]]+)\]/g;
     var chords = [];
     var match;
 
     while ((match = re.exec(raw)) !== null) {
+      // Only bracket tokens that look like real chords are chords. UG also
+      // wraps section markers (e.g. [Solo/Chorus], [Fade Out], [Verse 1-1])
+      // in brackets — those must not render as fake chords.
+      if (!chordTokenRe.test(match[1].trim())) continue;
       chords.push({
         name: match[1],
         index: match.index,
@@ -303,33 +315,51 @@
       });
     }
 
-    // Post-process: distribute chord-only line chords across following lyric lines
-    var mergedLines = [];
-    var pendingChords = [];
-    var globalChordIdx = 0;
+    // Post-process: keep instrumental runs first-class but merge isolated single
+    // chord-only lines (e.g. `/D/` between two lyric lines) into the following
+    // lyric line so the chord sits above the lyric it belongs to (UG layout).
+    // A run of 2+ consecutive chord-only lines = instrumental section with real
+    // length — retained as its own lines, rendered as a timed chord grid.
+    var finalLines = [];
     for (var i = 0; i < lines.length; i++) {
-      if (isChordOnlyLine(lines[i])) {
-        for (var ci = 0; ci < lines[i].pairs.length; ci++) {
-          if (lines[i].pairs[ci].chord) pendingChords.push(lines[i].pairs[ci].chord);
-        }
-        continue;
+      if (!isChordOnlyLine(lines[i], true)) { finalLines.push(lines[i]); continue; }
+      // Chord-only line — distinguish empty from a real chord line
+      var hasChords = lines[i].pairs.some(function (p) { return (p.chord || "").trim() !== ""; });
+      if (!hasChords) { continue; } // empty spacer line — drop it
+      // Determine run length across consecutive lines that carry chords
+      var runStart = i;
+      while (i + 1 < lines.length
+             && isChordOnlyLine(lines[i + 1], true)
+             && lines[i + 1].pairs.some(function (p) { return (p.chord || "").trim() !== ""; })) {
+        i++;
       }
-      if (pendingChords.length > 0) {
-        var merged = [];
-        for (var pi = 0; pi < lines[i].pairs.length; pi++) {
-          if (lines[i].pairs[pi].word && !lines[i].pairs[pi].chord) {
-            var chord = pendingChords[globalChordIdx % pendingChords.length];
-            merged.push({ chord: chord, word: lines[i].pairs[pi].word });
-            globalChordIdx++;
+      var runLen = i - runStart + 1;
+      var nextIsLyric = (i + 1) < lines.length && !isChordOnlyLine(lines[i + 1], true);
+      if (runLen === 1 && nextIsLyric) {
+        // Isolated marker: attach its chords to the next lyric line's words
+        var nxt = lines[i + 1];
+        var attachIdx = 0;
+        for (var ci = 0; ci < lines[runStart].pairs.length; ci++) {
+          var chordName = lines[runStart].pairs[ci].chord || lines[runStart].pairs[ci].word;
+          if (!chordName) continue;
+          if (nxt.pairs[attachIdx] && (nxt.pairs[attachIdx].word || "").trim()) {
+            if (nxt.pairs[attachIdx].chord) {
+              nxt.pairs.splice(attachIdx, 0, { chord: chordName, word: "" });
+            } else {
+              nxt.pairs[attachIdx].chord = chordName;
+            }
           } else {
-            merged.push(lines[i].pairs[pi]);
+            nxt.pairs.splice(attachIdx, 0, { chord: chordName, word: "" });
           }
+          attachIdx++;
         }
-        lines[i].pairs = merged;
+        // (line is dropped; chords now live on the following lyric line)
+      } else {
+        // Instrumental run — keep every line first-class
+        for (var k = runStart; k <= i; k++) finalLines.push(lines[k]);
       }
-      mergedLines.push(lines[i]);
     }
-    lines = mergedLines;
+    lines = finalLines;
 
     return { lines: lines, directives: directives };
   }
@@ -572,7 +602,7 @@
   }
 
   // Check if a line is pure chords (instrumental or bare chord names like "G", "Am", "D7")
-  function isChordOnlyLine(line) {
+  function isChordOnlyLine(line, noMutate) {
     if (!line) return true;
     // Check if ALL pairs have either empty words or bare chord names
     for (var i = 0; i < line.pairs.length; i++) {
@@ -581,7 +611,8 @@
       // A pair with a chord name in the word field and no chord field is a bare chord
       if (cleanWord.length > 0) {
         if (!chord && chordNameRe.test(cleanWord)) {
-          // Convert bare chord word to chord field, empty word
+          // Convert bare chord word to chord field, empty word (unless read-only check)
+          if (noMutate) return true;
           line.pairs[i].chord = cleanWord;
           line.pairs[i].word = "";
           continue; // this pair is now chord-only
@@ -678,42 +709,33 @@
       }
     }
 
-    // Check for solo section: if the current line or any line in this
-    // section has _duration set (from @duration) and the section is solo
-    var inSolo = false;
-    var soloRemaining = 0;
-    for (var i = currentIdx; i < lines.length && (i === currentIdx || lines[i].type === lines[currentIdx].type); i++) {
-      if (lines[i].type === "solo" || (lines[i]._duration && lines[i].type === "solo")) {
-        inSolo = true;
-        var soloStartTime = lines[i]._time || 0;
-        soloRemaining = (lines[i]._duration || 16) * (4 * 60) / (bpm || 120) - (position - soloStartTime);
-        break;
+    // Instrumental / no-lyric section detection.
+    // A run of consecutive chord-only lines = instrumental passage (intro, solo,
+    // interlude). Render them as a timed chord grid with real section length.
+    var chordStart = -1;
+    var chordEnd = -1;
+    if (lines[currentIdx] && isChordOnlyLine(lines[currentIdx], true)) {
+      for (var cs = currentIdx; cs >= 0; cs--) {
+        if (!isChordOnlyLine(lines[cs], true)) break;
+        chordStart = cs;
       }
-    }
-    // Also check if current line is chord-only (legacy solo detection)
-    if (!inSolo && lines[currentIdx] && isChordOnlyLine(lines[currentIdx])) {
-      inSolo = true;
-      soloRemaining = 8;
+      for (var ce = currentIdx; ce < lines.length; ce++) {
+        if (!isChordOnlyLine(lines[ce], true)) break;
+        chordEnd = ce;
+      }
     }
 
-    if (inSolo) {
+    // Before the first timed line, currentIdx pins at 0 — but if that line is
+    // chord-only and its time hasn't been reached yet, don't flash the grid.
+    if (!(lines[currentIdx]._time !== null && lines[currentIdx]._time !== undefined && lines[currentIdx]._time <= position)) {
+      chordStart = -1;
+      chordEnd = -1;
+    }
+
+    if (chordStart >= 0 && chordEnd >= chordStart) {
       lyricEngine.style.display = "none";
       soloEngine.style.display = "flex";
-      // Show chords from all lines in the solo section
-      soloGrid.innerHTML = "";
-      for (var i = currentIdx; i < lines.length; i++) {
-        if (lines[i].type !== "solo" && lines[i].type !== lines[currentIdx].type) break;
-        for (var ci = 0; ci < lines[i].pairs.length; ci++) {
-          if (lines[i].pairs[ci].chord) {
-            var span = document.createElement("span");
-            span.className = "chord";
-            span.textContent = "[" + lines[i].pairs[ci].chord + "]";
-            soloGrid.appendChild(span);
-          }
-        }
-      }
-      var pct = Math.min(100, Math.max(0, 100 - (soloRemaining / Math.max(lines[currentIdx]._duration || 16, 1)) * 100));
-      soloProgressFill.style.width = pct + "%";
+      renderInstrumentalGrid(lines, chordStart, chordEnd, position, bpm);
       return;
     } else {
       lyricEngine.style.display = "block";
@@ -747,16 +769,63 @@
     }
   }
 
-  function renderSoloGrid(line) {
-    soloGrid.innerHTML = "";
-    for (var i = 0; i < line.pairs.length; i++) {
-      if (line.pairs[i].chord) {
-        var span = document.createElement("span");
-        span.className = "chord";
-        span.textContent = "[" + line.pairs[i].chord + "]";
-        soloGrid.appendChild(span);
+  // Render an instrumental / no-lyric section as a timed chord grid.
+  // lines[startIdx..endIdx] is a contiguous run of chord-only lines. Each
+  // line's _time (from @time=N, LRCLIB, or estimate) gives real placement.
+  // Progress reflects the run's actual length, not a hardcoded 8s.
+  function renderInstrumentalGrid(lines, startIdx, endIdx, position, bpm) {
+    // Collect chords in order with their placement time.
+    var items = [];
+    for (var i = startIdx; i <= endIdx; i++) {
+      var t = lines[i]._time;
+      if (t === null || t === undefined) t = i * 2;
+      for (var ci = 0; ci < lines[i].pairs.length; ci++) {
+        if (lines[i].pairs[ci].chord) {
+          items.push({ chord: lines[i].pairs[ci].chord, time: t });
+        }
       }
     }
+    if (items.length === 0) {
+      soloGrid.innerHTML = "";
+      return;
+    }
+    items.sort(function (a, b) { return a.time - b.time; });
+
+    // Build grid
+    soloGrid.innerHTML = "";
+    var activeIdx = -1;
+    for (var k = 0; k < items.length; k++) {
+      var sp = document.createElement("span");
+      sp.className = "chord";
+      sp.textContent = "[" + items[k].chord + "]";
+      var c = getChordColor(items[k].chord);
+      if (c) sp.style.color = c;
+      if (position >= items[k].time) activeIdx = k;
+      soloGrid.appendChild(sp);
+    }
+
+    // Highlight the chord currently sounding
+    if (activeIdx >= 0 && activeIdx < soloGrid.children.length) {
+      soloGrid.children[activeIdx].classList.add("chord-active");
+    }
+
+    // Progress bar = real section length (last chord time → next line/section)
+    var startT = items[0].time;
+    var spanT = 8;
+    if (endIdx + 1 < lines.length) {
+      var nextT = lines[endIdx + 1]._time;
+      if (nextT !== null && nextT !== undefined) {
+        spanT = Math.max(4, nextT - startT);
+      }
+    } else if (items.length > 1) {
+      spanT = Math.max(4, (items[items.length - 1].time - startT) * 2);
+    }
+    var pct = Math.max(0, Math.min(100, ((position - startT) / spanT) * 100));
+    soloProgressFill.style.width = pct + "%";
+
+    // Cue label reflects the section type
+    var label = lines[startIdx].type || "";
+    if (soloCue) soloCue.textContent = (label.toUpperCase() || "CHORDS") + " \u2014 " + items.length + " CHORDS";
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -954,10 +1023,18 @@
   // CONDUCER METRONOME (High Contrast Bar & Beat)
   // ═══════════════════════════════════════════════════════════
 
-  function updateConductor(position, bpm) {
-    if (!bpm || bpm <= 0) return;
+  function updateConductor(position, bpm, tempo) {
+    if (!bpm || bpm <= 0) bpm = 120;
 
-    var totalBeats = (position * bpm) / 60;
+    // Beat source: when a live tap re-anchored the down-beat, follow the shared
+    // tempo anchor (wall clock) so the down-beat tracks the drummer; otherwise
+    // derive from REAPER's transport position.
+    var totalBeats;
+    if (tempo && tempo.source === "tap" && tempo.downbeatAt > 0) {
+      totalBeats = ((Date.now() - tempo.downbeatAt) / 1000) * ((tempo.bpm > 0 ? tempo.bpm : bpm) / 60);
+    } else {
+      totalBeats = (position * bpm) / 60;
+    }
     var bar = Math.floor(totalBeats / 4) + 1;
     var beat = Math.floor(totalBeats % 4) + 1;
 
@@ -1281,7 +1358,7 @@
       }
 
       // Conductor Counter & Metronome
-      updateConductor(s.position || 0, s.bpm || 0);
+      updateConductor(s.position || 0, s.bpm || 0, s.tempo || null);
 
       // Countdown ring (Feature 1)
       updateCountdownRing(s.position || 0, s.duration || 0, s.sections);

@@ -2827,3 +2827,94 @@ On fetch failure (server down, network issue), keeps the default `'circle'` — 
 | `iPhoneLiveServer/scripts/tui.js` | Settings row + toggle, refresh function, save function, cursor order |
 | `live-stage-hud/web/public/hud.js` | Dual chord coloring engines, config fetch on connect, dispatcher function |
 | `BUILD_LOG.md` | This entry |
+
+---
+
+## 2026-08-07 (Session 6) — Exact UG Chord Placement + Timed Instrumental Chord Grids
+
+### Session: Instrumental (no-lyric) sections now render with their true length; chord-only lines no longer collapse into lyric lines
+
+Danny asked to ensure chords land exactly where ULTIMATE GUITAR placed them, and — critically — that no-lyric sections (intros, solos, interludes) are treated as having real duration instead of being silently absorbed into the next lyric line. Investigation showed two bugs: (1) `parseChordPro`'s post-pass merged EVERY chord-only line into the following lyric line, discarding `_time`/`_bar` and destroying instrumental sections; (2) the solo path in `renderRollingEngine` used a hardcoded 8-second fallback instead of real section length.
+
+A follow-up scan of the whole library exposed a third bug that the new grid logic surfaced: UG files also put **section labels in brackets** (`[Solo/Chorus]`, `[Fade Out]`, `[Verse 1-1]`, `[Pre-Verse]`, `[Break]`). `parseLinePairs` treated ANY bracket token as a chord, so these labels rendered as fake colored chords on stage — and, worse, joined instrumental runs so a label could sit next to real chords in the grid. A library-wide audit of all 237 unique bracket tokens was used to design `chordTokenRe`, a validator that accepts every real chord (including power chords `C5`, slash chords `D/F#`, `Eb7#9`, `F#711`, `FM7`) and rejects every section label. `parseLinePairs` now skips non-chord bracket tokens, so labels render as plain text and never pollute runs or the grid. Verified: Seven Nation Army's bogus 3-line `Solo/Chorus / A / Pre-Verse` run vanished; Little Wing's intro grid shows only real chords; Give Me One Reason run is now clean `F# F#`.
+
+### Design Decision: Differentiate single chord markers from instrumental runs
+
+UG places chords in-line with lyrics (`[E][Bm]Got to be a joker...`) — those were always preserved by `parseLinePairs`, and remain untouched. The ambiguity was chord-only lines:
+
+| Situation | UG behavior | HUD behavior now |
+|-----------|-------------|------------------|
+| Single chord-only line before a lyric line (e.g. `/D/` between verses) | Chord sits above the next lyric | Merged into the following lyric line's leading word(s) — a chord above a word, exactly like UG |
+| Run of 2+ consecutive chord-only lines (intro/solo/interlude) | UG distributes chords across the section bars | Kept first-class, each with its own `_time`; rendered as a timed chord grid |
+| Empty spacer line (`pairs: []`) | — | Dropped entirely (carries no info) |
+
+### Implementation
+
+#### 1. `parseChordPro` post-pass (hud.js)
+
+Removed the old `pendingChords` merge that absorbed every chord-only line. New logic walks the parsed lines:
+
+```
+for each line:
+  - lyric line  → keep as-is
+  - chord-only, no chords (empty spacer) → drop
+  - chord-only run of 1 + next is lyric   → attach its chords to next line's leading word(s)
+  chord-only run of 2+ (instrumental)     → keep every line first-class
+```
+
+#### 2. `isChordOnlyLine(line, noMutate)`
+
+Added optional `noMutate` flag for a pure read-only check. The mutate path (older behavior, converts bare chord words in word fields into chord fields) is preserved for rendering time.
+
+#### 3. `renderRollingEngine` — real instrumental-grid path
+
+Replaced hardcoded 8s solo logic with a contiguous chord-run detector:
+
+- Forward+backward scan for the current line's chord-only run
+- Only renders grid when current line's `_time` is actually <= position (prevents flashing the grid before the section starts)
+- Shows `renderInstrumentalGrid` when current time lands in a run
+
+`renderInstrumentalGrid(lines, startIdx, endIdx, position, bpm)`:
+- Collects chords across the whole run in order, each with its placement `_time`
+- Colors each chord via `getChordColor()` (respects chord_color_mode)
+- Adds `chord-active` class to the chord currently sounding (last chord with `_time <= position`)
+- Progress bar = `(position - runStart) / (nextLineTime - runStart)` — real section length, not 8s
+- Cue label shows section type + count, e.g. `INTRO — 4 CHORDS`
+
+The old `renderSoloGrid` (single-line) and the `_duration`-based solo logic involving `@duration` were removed.
+
+#### 4. HTML/CSS
+
+- `hud.html`: solo-cue label now `id="soloCue"` for dynamic text
+- `hud.css`: added `.solo-grid .chord.chord-active` (all-white highlight), `.solo-grid .chord.dim` (future chords at 25% opacity)
+
+### Verification
+
+Node-based harness with a stub `document` validated:
+
+- Synthetic 4-chord intro (`/D/ /G/ /A/ /Bm/` @ 0/2/4/6s) parses to 4 first-class chord lines; `renderInstrumentalGrid` renders `[D][G][A][Bm]`, highlights the sounding chord, progress at t=3 = 37.5%, t=7.5 = 93.75%
+- Real `Lay Down Sally` — single `/D/`, `/E/`, `/A/` markers merged into following lyric lines; grid engages ONLY during the true intro (t≈20-21s) and nowhere else; no flash at song start (0-19s) thanks to the `_time <= position` guard
+- Real `Come Together` — intro `/Bm/` stays as a normal chord row; all other isolated markers merge into lyrics correctly
+- Library-wide 237-token audit — `chordTokenRe` accepts all real chords (power, slash, `#9`, `m11`, `FM7`), rejects all section labels
+- `hud.js` passes `new Function()` syntax check
+
+**Real-browser test (headless Chrome via CDP**, page run against the real LSM server with a mock socket.io, real XHR + `parseChordPro` + `renderRollingEngine`):
+- Lay Down Sally intro @ t=20.6s → `soloEngine` display `flex`, grid = `[A]` with `chord-active`, cue `INTRO — 1 CHORDS`; at t=25/35s (verse) the grid is hidden, at t=5s (before intro time) no grid (guard)
+- Seven Nation Army @ t=90s → no grid; present line renders `[C5][B5][G5][A]` above lyrics; `[Pre-Verse]` label renders as plain text, not a chord
+- Little Wing (all-null `_time`, pure estimation) @ t=12s → grid engages with all 100 real chords; confirms `prepareSongLines` fills null times so even unannotated instrumental runs render
+- Hard to Handle (bare power chords) — standalone `B5` lines now parse as chords (was lyric text under old `chordNameRe`); `chordNameRe` extended with `5` so bare power chords render + are grid candidates
+
+### Follow-up hardening (same session, after live-library scan)
+
+- **Bare power chords** — `chordNameRe` added `5` so `B5`/`C5`/`E5`/`G5` lines render as chords, not lyrics. Found 32 bare power-chord lines across 5 songs. Two previously-missed instrumental runs now detected: `Just Got Paid` (E5 E5) and `La Grange` (A5 A5).
+- **Null-time estimation verified in-browser** — songs with no `@time` on their instrumental runs still get timed grid via `prepareSongLines` estimation.
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `live-stage-hud/web/public/hud.js` | `chordNameRe` extended with power-chord `5` (bare `B5`/`C5` now parse as chords); `parseLinePairs` filters bracket tokens through `chordTokenRe` so UG section labels (`[Solo/Chorus]`, `[Fade Out]`, `[Verse 1-1]`) never render as chords (audited against all 237 catalog tokens); `parseChordPro` post-pass (single-marker merge vs run preserve), `isChordOnlyLine` pure check, `renderInstrumentalGrid`, guarded run detection in `renderRollingEngine`, removed hardcoded solo duration |
+| `live-stage-hud/web/public/hud.html` | `solo-cue` div gets `id="soloCue"` |
+| `live-stage-hud/web/public/hud.css` | `.chord-active` + `.chord.dim` grid styles |
+| `ARCHITECTURE.md` | Design decision: chord-only line policy |
+| `BUILD_LOG.md` | This entry |
